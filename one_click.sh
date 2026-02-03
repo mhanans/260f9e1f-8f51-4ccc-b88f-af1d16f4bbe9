@@ -61,10 +61,6 @@ function setup_python_env() {
         fi
     fi
 
-    # Final check of what we are using
-    echo "Using Python executable: $python_exec"
-    $python_exec --version
-
     local env_dir="env"
 
     # Check for broken environment (dir exists but activate script missing)
@@ -73,10 +69,6 @@ function setup_python_env() {
         rm -rf "$env_dir"
     fi
     
-    # Check if existing env is the wrong python version (optional, but good for "latest" request)
-    # For simplicity, if env exists, we trust it or the user can delete it. 
-    # But to enforce upgrade, let's leave it unless broken.
-
     if [ ! -d "$env_dir" ]; then
         print_highlight "Creating virtual environment in $env_dir using $python_exec..."
         
@@ -114,6 +106,37 @@ function setup_python_env() {
     # 4. Upgrade pip
     print_highlight "Upgrading pip to latest..."
     pip install --upgrade pip
+}
+
+function start_infrastructure() {
+    print_highlight "Starting Infrastructure (Docker)..."
+    
+    if ! command -v docker &> /dev/null; then
+        echo "Error: Docker is not installed. Please install Docker to run the database."
+        exit 1
+    fi
+
+    # Check if docker daemon is running
+    if ! docker info &> /dev/null; then
+        echo "Error: Docker daemon is not running. Please start Docker."
+        exit 1
+    fi
+    
+    # Start DB and Redis
+    echo "Starting PostgreSQL and Redis..."
+    if command -v docker-compose &> /dev/null; then
+        docker-compose up -d db redis
+    else
+        docker compose up -d db redis
+    fi
+    
+    # Wait for DB to be ready
+    echo "Waiting for Database to be ready..."
+    until docker exec $(docker ps -qf "name=db") pg_isready -U admin > /dev/null 2>&1; do
+        echo -n "."
+        sleep 2
+    done
+    echo " Database is ready!"
 }
 
 function install_dependencies() {
@@ -159,5 +182,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 check_disk_space
 setup_python_env
+start_infrastructure
 install_dependencies
 launch_app
