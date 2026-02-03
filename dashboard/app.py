@@ -160,7 +160,7 @@ def main():
                          if c2.button("🗑️", key=f"d_{f['Key']}"): s3_connector.delete_file(f['Key']); st.rerun()
     elif page == "🗂️ Connections": 
         # (Same as before)
-        st.title("🗂️ Unified Connection Manager")
+        st.title("🗂️ Connection Manager")
         st.subheader(f"Active Sources ({len(st.session_state['data_connections'])})")
         
         conns = st.session_state["data_connections"]
@@ -225,7 +225,7 @@ def main():
                  st.rerun()
     elif page == "⚙️ Rules Engine": 
         # (Same as before)
-         st.title("⚙️ PII Detection Rules Engine")
+         st.title("⚙️ Rules Management")
          st.caption("Manage detection patterns. Ensure 1 rule per Entity.")
          config = load_rules_config()
          recogs = config.get("custom_recognizers", [])
@@ -316,7 +316,7 @@ def main():
     
     # --- Page: Scan Manager (Fixed KeyError) ---
     if page == "🚀 Scan Manager":
-        st.title("🚀 Unified Scan Manager")
+        st.title("🚀 Scan Assistant")
         
         # Mode Selection
         scan_mode = st.radio("Scan Mode", ["🚀 Quick Scan (Auto)", "🎯 TargetedDB Scan (Query Builder)"], horizontal=True)
@@ -445,7 +445,7 @@ def main():
             st.divider()
             df = pd.DataFrame(st.session_state["scan_results"])
             if not df.empty:
-                st.write("### 🚨 Findings Report")
+                st.write("### 🚨 Detected Data")
                 st.dataframe(df, use_container_width=True)
 
 if __name__ == "__main__":

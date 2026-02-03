@@ -205,6 +205,17 @@ function start_infrastructure() {
     echo " Database is ready!"
 }
 
+function install_system_dependencies() {
+    print_highlight "Installing System Dependencies..."
+    if command -v apt-get &> /dev/null; then
+        if [ "$EUID" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
+        $SUDO apt-get update
+        $SUDO apt-get install -y tesseract-ocr tesseract-ocr-ind libtesseract-dev poppler-utils
+    else
+        echo "Apt not found. Skipping apt system dependencies."
+    fi
+}
+
 function install_dependencies() {
     print_highlight "Installing latest dependencies..."
     # -U upgrades everything to the latest version found in PyPI
@@ -259,6 +270,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 check_disk_space
 setup_python_env
 start_infrastructure
+install_system_dependencies
 install_dependencies
 seed_database
 launch_app
