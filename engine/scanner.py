@@ -58,7 +58,8 @@ class CustomPIIScanner:
                 "type": res.entity_type,
                 "start": res.start,
                 "end": res.end,
-                "score": res.score
+                "score": res.score,
+                "text": text[res.start:res.end] # Extract actual text
             })
         return output
 
