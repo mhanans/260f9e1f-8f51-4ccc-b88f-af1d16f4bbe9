@@ -230,7 +230,8 @@ function install_dependencies() {
 function seed_database() {
     print_highlight "Seeding Database..."
     # Run the seed script to create tables and initial user
-    python scripts/seed_db.py || {
+    # Add current directory to PYTHONPATH so it can find 'api' module
+    PYTHONPATH=. python scripts/seed_db.py || {
         echo "Failed to seed database."
         exit 1
     }
