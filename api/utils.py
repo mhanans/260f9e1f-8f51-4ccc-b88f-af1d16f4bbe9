@@ -6,7 +6,8 @@ SECRET_KEY = "CHANGE_THIS_TO_A_SECURE_SECRET"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Switched to pbkdf2_sha256 to avoid bcrypt version incompatibility/truncation issues
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
