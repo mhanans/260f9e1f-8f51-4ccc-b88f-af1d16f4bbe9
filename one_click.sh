@@ -29,25 +29,62 @@ function setup_python_env() {
     # 1. Check Python installation
     if ! command -v python3 &> /dev/null; then
         echo "Error: python3 could not be found."
-        echo "Please install python3: sudo apt install python3"
-        exit 1
-    fi
-
-    # 2. Check for venv module
-    if ! python3 -c "import venv" &> /dev/null; then
-        echo "Error: python3-venv module is not installed."
-        echo "Please install it: sudo apt install -y python3-venv"
-        exit 1
+        echo "Attempting to install python3..."
+        if command -v apt-get &> /dev/null; then
+             if [ "$EUID" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
+             $SUDO apt-get update && $SUDO apt-get install -y python3
+        else
+             echo "Please install python3 manually."
+             exit 1
+        fi
     fi
 
     local env_dir="env"
 
     if [ ! -d "$env_dir" ]; then
         print_highlight "Creating virtual environment in $env_dir..."
-        python3 -m venv "$env_dir" || {
-            echo "Failed to create virtual environment."
-            exit 1
-        }
+        
+        # Try creating venv; if it fails, try to install the missing venv package
+        if ! python3 -m venv "$env_dir"; then
+            echo "----------------------------------------------------------------"
+            echo "Venv creation failed. It seems 'python3-venv' is missing."
+            echo "Attempting to install it automatically..."
+            
+            # Get python version MAJOR.MINOR (e.g. 3.12)
+            PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+            PKG_NAME="python${PY_VER}-venv"
+            
+            echo "Detected Python version: $PY_VER"
+            echo "Installing packages: $PKG_NAME python3-venv"
+
+            if command -v apt-get &> /dev/null; then
+                 # Check for root
+                 if [ "$EUID" -ne 0 ]; then
+                    SUDO="sudo"
+                 else
+                    SUDO=""
+                 fi
+                 
+                 echo "Updating apt cache..."
+                 $SUDO apt-get update
+                 
+                 echo "Installing venv package..."
+                 # Try specific version first, then generic, or both
+                 $SUDO apt-get install -y "$PKG_NAME" python3-venv || {
+                    echo "Failed to install venv packages via apt."
+                    exit 1
+                 }
+                 
+                 echo "Retrying venv creation..."
+                 python3 -m venv "$env_dir" || {
+                     echo "Failed again. Please manually run: $SUDO apt install $PKG_NAME"
+                     exit 1
+                 }
+            else
+                echo "Package manager (apt-get) not found. Please manually install python3-venv."
+                exit 1
+            fi
+        fi
     else
         echo "Virtual environment already exists in $env_dir."
     fi
