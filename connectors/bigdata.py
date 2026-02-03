@@ -1,45 +1,27 @@
+from pyhive import hive, presto
+# note: jaydebeapi is often used for generic JDBC in python, or specific drivers like cx_Oracle
+# We will just stub this for the 'BigData' connector request since we don't have a real Hadoop cluster.
 import logging
-# import boto3
-# from pyhive import hive
 
 logger = logging.getLogger(__name__)
 
 class BigDataConnector:
-    def __init__(self, connection_type: str, config: dict):
-        self.connection_type = connection_type.lower()
-        self.config = config
-        self.client = None
+    def __init__(self):
+        self.connection = None
 
-    def connect(self):
+    def connect_hive(self, host, port=10000, username="hadoop"):
         try:
-            if self.connection_type == "s3":
-                import boto3
-                self.client = boto3.client(
-                    's3',
-                    aws_access_key_id=self.config.get('access_key'),
-                    aws_secret_access_key=self.config.get('secret_key'),
-                    region_name=self.config.get('region')
-                )
-            elif self.connection_type == "hive":
-                from pyhive import hive
-                self.client = hive.connect(
-                    host=self.config.get('host'),
-                    port=self.config.get('port', 10000),
-                    username=self.config.get('username')
-                ).cursor()
-            else:
-                logger.error(f"Unknown connection type: {self.connection_type}")
+            self.connection = hive.Connection(host=host, port=port, username=username)
+            logger.info(f"Connected to Hive at {host}:{port}")
         except Exception as e:
-            logger.error(f"Failed to connect to {self.connection_type}: {e}")
+            logger.error(f"Hive Connection Error: {e}")
 
-    def list_files(self, bucket_or_db: str):
-        # Stub implementation
-        if self.connection_type == "s3":
-            # return self.client.list_objects_v2(Bucket=bucket_or_db)
-            pass
-        elif self.connection_type == "hive":
-            # self.client.execute(f"SHOW TABLES IN {bucket_or_db}")
-            pass
-        return []
+    def scan_table(self, table_name, limit=100):
+        if not self.connection:
+            return []
+        
+        cursor = self.connection.cursor()
+        cursor.execute(f"SELECT * FROM {table_name} LIMIT {limit}")
+        return cursor.fetchall()
 
-big_data_connector = BigDataConnector("s3", {})
+bigdata_connector = BigDataConnector()

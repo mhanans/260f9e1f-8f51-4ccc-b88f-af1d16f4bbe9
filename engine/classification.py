@@ -3,28 +3,32 @@ import re
 
 class ClassificationEngine:
     def __init__(self):
-        # 1. Sensitivity Mapping (Data Catalog Logic)
+        # 1. Sensitivity Mapping based on UU PDP (UU No. 27 Tahun 2022)
         self.sensitivity_map = {
-            "ID_NIK": "Specific/Sensitive",
-            "ID_NPWP": "Specific/Sensitive",
-            "CREDIT_CARD": "Specific/Sensitive",
-            "PHONE_NUMBER": "General",
-            "PERSON": "General",
-            "EMAIL_ADDRESS": "General",
-            "ID_PHONE_ID": "General"
+            "ID_NIK": "Spesifik (Data Biometrik/Identitas)",
+            "ID_NPWP": "Spesifik (Data Keuangan)",
+            "ID_PHONE_ID": "Spesifik (Data Identitas)",
+            "CREDIT_CARD": "Spesifik (Data Keuangan)",
+            "HEALTH_DATA": "Spesifik (Data Kesehatan)",
+            "RELIGION": "Spesifik (Data Keyakinan)",
+            "PHONE_NUMBER": "Spesifik (Data Identitas)",
+            "EMAIL_ADDRESS": "Spesifik (Data Identitas)",
+            "PERSON": "Umum",
+            "GENDER": "Umum",
+            "DATE_TIME": "Umum"
         }
 
         # 2. Context Rules (Automated Labeling)
         self.context_rules = [
-            {"category": "Financial", "keywords": ["gaji", "salary", "rekening", "bank", "transfer", "rupiah", "rp"]},
-            {"category": "Health", "keywords": ["sakit", "diagnosa", "dokter", "rs", "rawat", "darah"]},
-            {"category": "HR", "keywords": ["karyawan", "pegawai", "cuti", "absensi", "kontrak"]},
-            {"category": "Legal", "keywords": ["perjanjian", "hukum", "pidana", "perdata", "pasal"]}
+            {"category": "Financial", "keywords": ["gaji", "salary", "rekening", "bank", "transfer", "rupiah", "rp", "keuangan", "pajak"]},
+            {"category": "Health", "keywords": ["sakit", "diagnosa", "dokter", "rs", "rawat", "darah", "medis", "pasien"]},
+            {"category": "HR", "keywords": ["karyawan", "pegawai", "cuti", "absensi", "kontrak", "rekrutmen", "hrd"]},
+            {"category": "Legal", "keywords": ["perjanjian", "hukum", "pidana", "perdata", "pasal", "uu", "regulasi"]}
         ]
 
     def classify_sensitivity(self, pii_type: str) -> str:
-        """Returns 'Specific/Sensitive' or 'General' based on PII type."""
-        return self.sensitivity_map.get(pii_type, "General")
+        """Returns Sensitivity Category based on UU PDP."""
+        return self.sensitivity_map.get(pii_type, "Umum")
 
     def classify_document_category(self, text: str) -> List[str]:
         """Scans text for keywords to determine document category (e.g. Financial)."""
@@ -33,10 +37,10 @@ class ClassificationEngine:
         
         for rule in self.context_rules:
             for keyword in rule["keywords"]:
-                # Simple exact match (can be improved with word boundaries)
-                if keyword in text_lower:
+                # Use regex word boundary for more accurate matching
+                if re.search(r'\b' + re.escape(keyword) + r'\b', text_lower):
                     tags.add(rule["category"])
-                    break # One keyword enough for category
+                    break 
         
         return list(tags)
 
