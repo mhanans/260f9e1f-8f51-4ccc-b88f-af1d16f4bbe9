@@ -516,9 +516,13 @@ def main():
                 
                 for idx, row in edited_df.iterrows():
                     key = f"{row['Source']}|{row['Table/File Location']}"
-                    current_val = row["Purpose"]
-                    if new_purposes.get(key) != current_val:
-                        new_purposes[key] = current_val
+                    current_stored_val = purposes.get(key, "")
+                    new_ui_val = row["Purpose"]
+                    
+                    # Only update if the user explicitly changed this value in the UI
+                    # This prevents unchanged rows (which hold the old value) from overwriting a change from another row with the same key
+                    if new_ui_val != current_stored_val:
+                        new_purposes[key] = new_ui_val
                         changes_detected = True
                 
                 if changes_detected:
