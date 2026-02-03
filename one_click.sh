@@ -41,6 +41,13 @@ function setup_python_env() {
 
     local env_dir="env"
 
+    # Check for broken environment (dir exists but activate script missing)
+    if [ -d "$env_dir" ] && [ ! -f "$env_dir/bin/activate" ]; then
+        echo "Detected broken virtual environment (missing activate script)."
+        echo "Removing broken '$env_dir' directory..."
+        rm -rf "$env_dir"
+    fi
+
     if [ ! -d "$env_dir" ]; then
         print_highlight "Creating virtual environment in $env_dir..."
         
@@ -70,10 +77,7 @@ function setup_python_env() {
                  
                  echo "Installing venv package..."
                  # Try specific version first, then generic, or both
-                 $SUDO apt-get install -y "$PKG_NAME" python3-venv || {
-                    echo "Failed to install venv packages via apt."
-                    exit 1
-                 }
+                 $SUDO apt-get install -y "$PKG_NAME" python3-venv
                  
                  echo "Retrying venv creation..."
                  python3 -m venv "$env_dir" || {
