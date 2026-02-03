@@ -108,80 +108,92 @@ function setup_python_env() {
     pip install --upgrade pip
 }
 
-function install_docker() {
-    print_highlight "Checking Docker installation..."
-    
-    if command -v docker &> /dev/null; then
-        echo "Docker is already installed."
-        return 0
-    fi
-    
-    echo "Docker not found. Attempting to install..."
-    
+function install_docker_engine() {
+    print_highlight "Installing Docker Engine..."
     if command -v apt-get &> /dev/null; then
         if [ "$EUID" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
-        
-        echo "Updating apt..."
         $SUDO apt-get update
+        $SUDO apt-get install -y docker.io docker-compose
         
-        echo "Installing docker.io and docker-compose..."
-        $SUDO apt-get install -y docker.io docker-compose || {
-            echo "Failed to install docker via apt."
-            return 1
-        }
-        
-        # Add current user to docker group to avoid sudo requirements later
-        # (Only relevant if not running as root)
         if [ "$EUID" -ne 0 ]; then
-             echo "Adding user $USER to docker group..."
              $SUDO usermod -aG docker $USER
-             echo "NOTE: You may need to logout and login again for group changes to take effect."
         fi
-        
-        echo "Docker installed successfully."
     else
-        echo "Package manager not supported (apt-get not found). Please install Docker manually."
-        exit 1
+        echo "Apt not found. Cannot auto-install Docker."
+        return 1
     fi
 }
 
 function start_infrastructure() {
-    install_docker
-
     print_highlight "Starting Infrastructure (Docker)..."
     
+    # Check if docker command exists
+    if ! command -v docker &> /dev/null; then
+        echo "Docker command not found."
+        install_docker_engine || exit 1
+    fi
+
     # Check if docker daemon is running
+    # We check 'docker info' to see if client can talk to engine
     if ! docker info &> /dev/null; then
         echo "Docker daemon is not running. Attempting to start..."
         if [ "$EUID" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
         
-        # Try service command first
+        # Try finding the service unit first
+        SERVICE_STARTED=false
+        
+        # Method 1: service command (most common)
         if command -v service &> /dev/null; then
-            $SUDO service docker start
-        elif command -v systemctl &> /dev/null; then
-            $SUDO systemctl start docker
-        else
-            # WSL 2 fallback mostly
-            if [ -f "/etc/init.d/docker" ]; then
-                 $SUDO /etc/init.d/docker start
-            fi
+            echo "Trying 'service docker start'..."
+            $SUDO service docker start && SERVICE_STARTED=true
+        fi
+        
+        # Method 2: init.d script directly (WSL1/older)
+        if [ "$SERVICE_STARTED" = false ] && [ -f "/etc/init.d/docker" ]; then
+             echo "Trying '/etc/init.d/docker start'..."
+             $SUDO /etc/init.d/docker start && SERVICE_STARTED=true
         fi
         
         sleep 3
         
+        # If still not running, maybe the engine package (docker.io) is missing?
+        # Sometimes 'docker' binary comes from 'docker-cli' but 'dockerd' is in 'docker.io'
         if ! docker info &> /dev/null; then
-            echo "Error: Failed to start Docker daemon automatically."
-            echo "Please ensure Docker Desktop is running (if on Windows/WSL) or run 'sudo service docker start'."
+            echo "Docker daemon still not reachable."
+            echo "Checking if we need to install the full engine (docker.io)..."
+            
+            install_docker_engine
+            
+            # Try starting again after install
+            if command -v service &> /dev/null; then
+                $SUDO service docker start
+            fi
+            sleep 3
+        fi
+        
+        # Final check
+        if ! docker info &> /dev/null; then
+            echo "--------------------------------------------------------"
+            echo "CRITICAL ERROR: Unable to start Docker."
+            echo "1. If you are on WSL, make sure Docker Desktop for Windows is running."
+            echo "2. Check 'Settings > Resources > WSL Integration' in Docker Desktop."
+            echo "3. Alternatively, try running 'sudo dockerd &' manually."
+            echo "--------------------------------------------------------"
             exit 1
         fi
     fi
     
     # Start DB and Redis
-    echo "Starting PostgreSQL and Redis..."
+    echo "Docker is running."
+    echo "Starting PostgreSQL and Redis containers..."
+    
     if command -v docker-compose &> /dev/null; then
         docker-compose up -d db redis
-    else
+    elif docker compose version &> /dev/null; then
         docker compose up -d db redis
+    else
+        echo "Error: Neither 'docker-compose' nor 'docker compose' found."
+        exit 1
     fi
     
     # Wait for DB to be ready
