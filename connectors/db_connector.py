@@ -2,14 +2,12 @@ from typing import List, Dict
 import logging
 import requests
 import psycopg2
-# import pyodbc # for sql server
-# import pymongo # for mongo
 
 logger = logging.getLogger(__name__)
 
 class GenericDBConnector:
     def __init__(self):
-        self.connections = {} # Store multiple connections {id: conn_obj}
+        self.connections = {} 
 
     def test_connection(self, type: str, connection_string: str):
         try:
@@ -22,29 +20,48 @@ class GenericDBConnector:
                 if res.status_code == 200:
                     return True, f"API Reachable ({res.status_code})"
                 return False, f"API Error {res.status_code}"
-            # Add other types (MSSQL, Mongo) specific logic here
             return False, "Unsupported Type"
         except Exception as e:
             return False, str(e)
 
     def scan_source(self, type: str, connection_string: str, query_or_params: str = None) -> List[str]:
         """
-        Fetches data samples (e.g., first 50 rows or API json) to be sent to scanner.
-        Returns list of strings (documents) to scan.
+        Fetches data samples. 
+        If query is None for DB, it attempts to Auto-Discover public tables and sample rows.
         """
         results = []
         try:
             if type == 'postgresql':
                 conn = psycopg2.connect(connection_string)
                 cursor = conn.cursor()
-                # Default to pulling first 50 rows of 'users' or whatever table if specified
-                # For this generic demo, we assume 'query' helps safely or we just list tables
-                # To prevent injection risk in real app, use better query builder.
+                
                 if query_or_params:
+                    # User provided a specific query
                     cursor.execute(query_or_params)
                     rows = cursor.fetchall()
-                    for r in rows:
-                        results.append(str(r)) # Convert row to string for PII scanning
+                    for r in rows: results.append(str(r))
+                else:
+                    # Auto-Scan Mode: Fetch valid tables from public schema
+                    cursor.execute("""
+                        SELECT table_name 
+                        FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        LIMIT 10;
+                    """)
+                    tables = [row[0] for row in cursor.fetchall()]
+                    
+                    for table in tables:
+                        try:
+                            # Sample 5 rows from each table
+                            # Formatting table name safely (simple alphanumeric check suggested in real prod)
+                            cursor.execute(f"SELECT * FROM \"{table}\" LIMIT 5;")
+                            rows = cursor.fetchall()
+                            for r in rows:
+                                # Prepend table name for context
+                                results.append(f"[Table: {table}] {str(r)}")
+                        except Exception as inner_e:
+                            logger.error(f"Error scanning table {table}: {inner_e}")
+
                 conn.close()
             
             elif type == 'api_get':
@@ -52,10 +69,8 @@ class GenericDBConnector:
                 if res.status_code == 200:
                     try:
                         data = res.json()
-                        # Flatten json to list of strings
                         if isinstance(data, list):
-                            for item in data:
-                                results.append(str(item))
+                            for item in data: results.append(str(item))
                         else:
                             results.append(str(data))
                     except:
