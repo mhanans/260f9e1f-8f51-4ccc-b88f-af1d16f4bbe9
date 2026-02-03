@@ -1,3 +1,8 @@
+# --- SYSTEM REQUIREMENTS ---
+# Please ensure the following system packages are installed:
+# sudo apt-get install -y tesseract-ocr tesseract-ocr-ind libtesseract-dev poppler-utils
+# ---------------------------
+
 streamlit
 requests
 pandas
