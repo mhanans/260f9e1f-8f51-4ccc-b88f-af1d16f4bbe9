@@ -34,6 +34,7 @@ def login(req: TokenRequest):
 
 @app.post("/api/v1/scan/text")
 def scan_text(req: TextScanRequest):
+    logger.info("SCAN TEXT REQUEST", length=len(req.text))
     pdi_results = scanner_engine.analyze_text(req.text)
     return {"results": pdi_results}
 
@@ -43,25 +44,31 @@ async def scan_file(file: UploadFile = File(...)):
     filename = file.filename.lower()
     text = ""
 
+    logger.info("SCAN FILE REQUEST", filename=filename, size=len(content))
+
     # 1. Determine Extraction Strategy
     if filename.endswith(".pdf"):
-        text = ocr_engine.extract_text_from_pdf(content)
+        text = ocr_engine.extract_text_from_pdf(content, filename)
     elif filename.endswith(".docx"):
-        text = ocr_engine.extract_text_from_docx(content)
+        text = ocr_engine.extract_text_from_docx(content, filename)
     elif filename.endswith(".jpg") or filename.endswith(".png") or filename.endswith(".jpeg"):
-        text = ocr_engine.extract_text_from_image(content)
+        text = ocr_engine.extract_text_from_image(content, filename)
     else:
         # Fallback text decode
         try:
             text = content.decode("utf-8")
         except:
             text = ""
+            logger.warning(f"Could not decode text file {filename}")
     
+    logger.info("EXTRACTED TEXT", filename=filename, length=len(text), preview=text[:50])
+
     # 2. Scan Extracted Text
     pdi_results = scanner_engine.analyze_text(text)
     
     return {
         "filename": filename,
-        "extracted_text_preview": text[:100],
+        "extracted_text_preview": text[:200], # Return larger preview to UI for debug
+        "ocr_log": f"Extracted {len(text)} characters.",
         "results": pdi_results
     }
