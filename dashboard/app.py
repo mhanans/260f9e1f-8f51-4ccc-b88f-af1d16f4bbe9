@@ -8,7 +8,7 @@ import structlog
 import time
 from pathlib import Path
 from datetime import datetime
-from docx import Document # Added to read docx locally in frontend for classification context
+from docx import Document 
 
 # --- Internal Engines ---
 from engine.classification import classification_engine
@@ -45,12 +45,13 @@ st.markdown("""
     /* Table Styling */
     .stTable { background-color: #f0f2f6; color: black; }
     
-    /* Tags */
-    .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; margin-right: 4px; color: white; }
-    
     /* Sidebar */
     section[data-testid="stSidebar"] { background-color: #2c3e50; color: white; }
     .stButton>button { width: 100%; border-radius: 5px; }
+
+    /* File Box */
+    .file-box { border: 1px solid #ddd; padding: 10px; border-radius: 5px; margin-bottom: 5px; background: white; }
+    .stButton>button { border-radius: 20px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -92,7 +93,6 @@ def mask_data(text, entity_type=None):
     if not text: return ""
     
     if entity_type == "ID_NIK":
-        # Keep first 4 and last 4, match standard masking
         if len(text) > 8:
             return text[:4] + "********" + text[-4:]
         return "********"
@@ -103,16 +103,11 @@ def mask_data(text, entity_type=None):
             return parts[0][0] + "***@" + parts[-1]
         return "***@***"
         
-    # Default mask
     visible = 2
     if len(text) <= visible * 2: return "****"
     return f"{text[:visible]}{'*' * (len(text) - visible*2)}{text[-visible:]}"
 
 def read_local_file_content(file_path):
-    """
-    Reads content from local file path for context analysis in the dashboard.
-    Supports txt, csv, docx. (PDF is binary, requires PyMuPDF which is in connector)
-    """
     try:
         if file_path.suffix == '.docx':
             doc = Document(file_path)
@@ -139,11 +134,11 @@ def main():
 
     # --- Page: My Files (Data Lake) ---
     if page == "📂 My Files (Storage)":
-        st.title("📂 My Data Lake (WSL Storage)")
+        st.title("📂 My Cloud Storage (WSL)")
         st.caption(f"Physical Path: `{BASE_DIR.absolute()}`")
 
         # 1. Management: Upload
-        with st.expander("📤 Upload Files to Storage", expanded=True):
+        with st.expander("📤 Upload New Files", expanded=True):
             uploaded_files = st.file_uploader(
                 "Drag and Drop files here", 
                 type=["pdf", "docx", "txt", "csv", "xlsx"], 
@@ -155,84 +150,87 @@ def main():
                         st.toast(f"Saved: {f.name}")
                 st.rerun()
 
-        # 2. Management: List & Actions
+        # 2. File List Management (Dropbox Style logic)
         stored_files = get_stored_files()
         
         if not stored_files:
-            st.info("Storage is empty.")
+            st.info("No files in WSL storage.")
         else:
-            col1, col2 = st.columns([3, 1])
-            with col1: 
-                st.subheader(f"📄 Stored Files ({len(stored_files)})")
-            with col2:
-                if st.button("🚀 ONE CLICK SCAN ALL STORAGE", type="primary"):
-                    st.info("Scanning entire storage folder in background...")
-                    # Logic to trigger simulated background scan
-                    with st.status("Running Classifier Engine...") as status:
-                        all_results = []
-                        for i, file_path in enumerate(stored_files):
-                            status.update(label=f"Processing {file_path.name}...", state="running")
-                            
-                            try:
-                                # Pre-read content for dashboard context logic (Classification)
-                                # Note: Actual scanning happened in API via 'files' payload, this is just for the local classification engine logic in this mockup
-                                content_str = read_local_file_content(file_path)
-
-                                # Auto-Classify Doc Type
-                                doc_categories = classification_engine.classify_document_category(content_str)
-                                
-                                # Entropy Check (Security Posture)
-                                sec_posture = "SAFE"
-                                if analytics_engine.check_security_posture(file_path.name, content_str[:100]) == "CRITICAL: Sensitive Column in Plain Text":
-                                        sec_posture = "CRITICAL (Unencrypted)"
-
-                                # Send to API for PII Scanning
-                                with open(file_path, "rb") as f:
-                                    files_payload = {"file": (file_path.name, f)}
-                                    res = requests.post(f"{API_URL}/scan/file", headers=headers, files=files_payload)
-                                    
-                                    if res.status_code == 200:
-                                        data = res.json()
-                                        for finding in data.get("results", []):
-                                            # UU PDP Classification
-                                            sensitivity = classification_engine.classify_sensitivity(finding["type"])
-                                            
-                                            all_results.append({
-                                                "File Name": file_path.name,
-                                                "Doc Category": ", ".join(doc_categories) or "General",
-                                                "PII Type": finding["type"],
-                                                "Sensitivity": sensitivity,
-                                                "Detected Data": finding["text"],
-                                                "Confidence": finding["score"],
-                                                "Security Posture": sec_posture
-                                            })
-                            except Exception as e:
-                                logger.error("scan_error", filename=file_path.name, error=str(e))
-                        
-                        st.session_state["scan_results"] = all_results
-                        status.update(label="✅ Scan Complete!", state="complete", expanded=False)
-
-            # File Management Table
-            st.write("### 🗂️ File Management")
+            st.write(f"### Stored Files ({len(stored_files)})")
+            
+            # Dropbox-like List
             for f in stored_files:
-                c1, c2, c3 = st.columns([6, 1, 1])
-                c1.text(f"📄 {f.name} ({f.stat().st_size/1024:.1f} KB)")
-                if c2.button("🗑️", key=f"del_{f.name}"):
-                    try:
-                        os.remove(f)
-                        logger.info("file_deleted", filename=f.name)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error deleting: {e}")
-                if c3.button("🚫", key=f"block_{f.name}"):
-                    st.warning(f"File {f.name} marked for blacklist/quarantine.")
+                with st.container():
+                    c1, c2, c3 = st.columns([5, 1, 1])
+                    c1.markdown(f"<div class='file-box'>📄 {f.name}</div>", unsafe_allow_html=True)
+                    
+                    if c2.button("🗑️", key=f"del_{f.name}"):
+                        try:
+                            os.remove(f)
+                            logger.info("file_deleted", filename=f.name)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                    if c3.button("🚫", key=f"block_{f.name}"):
+                         st.toast(f"{f.name} Blocked")
+            
+            st.divider()
+            
+            # 3. Action: Scan All
+            if st.button("🚀 ONE CLICK SCAN ALL STORAGE", type="primary"):
+                st.info("Scanning entire storage folder in background...")
+                with st.status("Running Classification Engine...") as status:
+                    all_results = []
+                    
+                    for i, file_path in enumerate(stored_files):
+                        status.update(label=f"Processing {file_path.name}...", state="running")
+                        
+                        try:
+                            # Context Read
+                            content_str = read_local_file_content(file_path)
+                            doc_categories = classification_engine.classify_document_category(content_str)
+                            
+                            # Entropy Check
+                            sec_posture = "SAFE"
+                            if analytics_engine.check_security_posture(file_path.name, content_str[:100]) == "CRITICAL: Sensitive Column in Plain Text":
+                                    sec_posture = "CRITICAL (Unencrypted)"
+
+                            # Send to API
+                            with open(file_path, "rb") as f:
+                                files_payload = {"file": (file_path.name, f)}
+                                res = requests.post(f"{API_URL}/scan/file", headers=headers, files=files_payload)
+                                
+                                if res.status_code == 200:
+                                    data = res.json()
+                                    for finding in data.get("results", []):
+                                        
+                                        # Filter False Positives (New Logic)
+                                        if classification_engine.is_false_positive(finding["text"], finding["type"]):
+                                            continue
+
+                                        # UU PDP Classification
+                                        sensitivity = classification_engine.classify_sensitivity(finding["type"])
+                                        
+                                        all_results.append({
+                                            "File Name": file_path.name,
+                                            "Doc Category": ", ".join(doc_categories) or "General",
+                                            "PII Type": finding["type"],
+                                            "Sensitivity Logic": sensitivity, # Renamed for clarity
+                                            "Detected Data": finding["text"],
+                                            "Confidence": finding["score"],
+                                            "Security Posture": sec_posture
+                                        })
+                        except Exception as e:
+                            logger.error("scan_error", filename=file_path.name, error=str(e))
+                            
+                    st.session_state["scan_results"] = all_results
+                    status.update(label="✅ Scan Complete!", state="complete", expanded=False)
 
             # --- Results Area ---
             if "scan_results" in st.session_state and st.session_state["scan_results"]:
                 st.markdown("---")
                 st.subheader("🚨 Classification Results (UU PDP)")
                 
-                # Masking On-The-Fly (Poin 2 & 5)
                 mask_enabled = st.toggle("🔒 Privacy Mode (Masking On-The-Fly)", value=True)
                 
                 df = pd.DataFrame(st.session_state["scan_results"])
@@ -241,7 +239,7 @@ def main():
                     display_df = df.copy()
                     
                     if mask_enabled:
-                        display_df["Detected Data"] = display_df.apply(
+                         display_df["Detected Data"] = display_df.apply(
                             lambda row: mask_data(row["Detected Data"], row["PII Type"]), 
                             axis=1
                         )
@@ -250,10 +248,10 @@ def main():
                         display_df,
                         use_container_width=True,
                         column_config={
-                            "Sensitivity": st.column_config.TextColumn("UU PDP Category"),
+                            "Sensitivity Logic": st.column_config.TextColumn("Kategori UU PDP"),
                             "Detected Data": st.column_config.TextColumn("Data Sample"),
                             "Confidence": st.column_config.ProgressColumn(format="%.2f", min_value=0, max_value=1),
-                            "Security Posture": st.column_config.TextColumn("Security Check")
+                            "Security Posture": st.column_config.TextColumn("Postur Keamanan")
                         }
                     )
                     
@@ -266,19 +264,19 @@ def main():
     elif page == "📊 Dashboard":
         st.title("📊 Security Posture (UU PDP)")
         
-        stored_count = len(get_stored_files())
-        findings_count = len(st.session_state.get("scan_results", []))
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Documents", f"{stored_count}", delta="Local Storage")
-        c2.metric("Sensitive Findings", f"{findings_count}", delta_color="inverse")
-        c3.metric("System Status", "Active", delta="Celery Workers Ready")
-        
-        if "scan_results" in st.session_state:
-            df = pd.DataFrame(st.session_state["scan_results"])
-            if not df.empty:
-                st.write("### Data Sensitivity Distribution")
-                st.bar_chart(df["Sensitivity"].value_counts())
+        if "scan_results" not in st.session_state:
+             st.info("Run a scan in 'My Files' first.")
+        else:
+             df = pd.DataFrame(st.session_state["scan_results"])
+             if not df.empty:
+                 # Metric Cards (Fixed Visuals)
+                 m1, m2, m3 = st.columns(3)
+                 m1.metric("Total Findings", len(df))
+                 m2.metric("Critical Risk (Spesifik)", len(df[df["Sensitivity Logic"].str.contains("Spesifik", na=False)]))
+                 m3.metric("Compliance Score", "HIGH", delta="Active Monitoring")
+                 
+                 st.write("### Data Sensitivity Distribution")
+                 st.bar_chart(df["Sensitivity Logic"].value_counts())
 
     # --- Page: Audit Logs ---
     elif page == "📜 Audit Logs":
