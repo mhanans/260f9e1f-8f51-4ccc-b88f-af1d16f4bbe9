@@ -9,14 +9,8 @@ class CustomPIIScanner:
         self.analyzer = AnalyzerEngine()
         
         # 1. Disable Noise Recognizers (US-centric low value ones for this context)
-        # We identify them by name usually, or removing the standard ones.
-        # Since removing by instance is hard, we just ignore them in results or override.
-        # A cleaner way is to remove them from the registry.
         useless_recognizers = [
-            "USPassportRecognizer",
-            "UsBankRecognizer",
-            "UsItinRecognizer",
-            "UsLicenseRecognizer",
+            "USPassportRecognizer", "UsBankRecognizer", "UsItinRecognizer", "UsLicenseRecognizer"
         ]
         
         # Filter out these recognizers
@@ -50,13 +44,14 @@ class CustomPIIScanner:
         nik_pattern = Pattern(
             name="nik_pattern",
             regex=r"\b\d{16}\b",
-            score=0.6 # Base score
+            score=0.6 
         )
+        nik_context = ["nik", "nomor", "induk", "kependudukan", "ktp", "identitas"]
         nik_recognizer = PatternRecognizer(
             supported_entity="ID_NIK",
             name="id_nik_recognizer",
             patterns=[nik_pattern],
-            context=["nik", "nomor", "induk", "kependudukan", "ktp"]
+            context=nik_context
         )
         self.analyzer.registry.add_recognizer(nik_recognizer)
 
@@ -98,17 +93,17 @@ class CustomPIIScanner:
         
         output = []
         for res in results:
-            # Filter out blacklisted entities explicitly if they slipped through
-            # (Though deny_list recognizer usually handles scoring logic, 
-            # sometimes we want to be sure to ignore our Custom DENY entity)
             if res.entity_type == "DENY_LIST":
                 continue
 
-            # Skip common False Positives for DATE_TIME that look like coordinates
-            # -106.8456 (Coordinate) vs Date
             extracted_text = text[res.start:res.end]
             
-            # Simple heuristic: If it's DATE_TIME but looks like a float coordinate, skip
+            # Additional logic to skip pure header words even if Presidio tagged them
+            # (Double-check safety for words like 'NIK' appearing as Person)
+            if extracted_text.lower() in [x.lower() for x in self.analyzer.registry.recognizers[-1].deny_list]: 
+                 continue
+
+            # Skip common False Positives for DATE_TIME that look like coordinates
             if res.entity_type == "DATE_TIME":
                 if re.match(r"^-?\d{1,3}\.\d+$", extracted_text):
                     continue
