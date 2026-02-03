@@ -1,37 +1,50 @@
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import logging
+import math
+from difflib import SequenceMatcher
 
-logger = logging.getLogger(__name__)
-
-class ContentAnalytics:
-    def __init__(self):
-        self.vectorizer = TfidfVectorizer(stop_words='english')
-
-    def calculate_similarity(self, text1: str, text2: str) -> float:
-        """
-        Calculate Cosine Similarity between two text blobs.
-        Returns a float between 0.0 and 1.0.
-        """
-        if not text1 or not text2:
-            return 0.0
-        
-        try:
-            tfidf_matrix = self.vectorizer.fit_transform([text1, text2])
-            similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])
-            return float(similarity[0][0])
-        except Exception as e:
-            logger.error(f"Error calculating similarity: {e}")
-            return 0.0
-
+class AnalyticsEngine:
     def check_encryption(self, text: str) -> bool:
         """
-        Basic heuristic to check if text seems encrypted (high entropy/randomness).
+        Determines if text might be encrypted using Shannon Entropy.
+        High entropy (> 4.5 for short strings, typically > 3.5-4.0ish) usually indicates randomness/encryption.
+        Real language usually has entropy between 2.5 and 3.5.
         """
-        # A simple placeholder. Real implementation would use Great Expectations or Entropy calculation.
-        # Encrypted text usually has no spaces and high character variety.
-        if len(text) > 50 and " " not in text[:50]:
-            return True
-        return False
+        if not text:
+            return False
+            
+        entropy = self._shannon_entropy(text)
+        # Threshold implies high randomness (encrypted or compressed)
+        # Plain hex/base64 of encrypted data usually looks very random
+        return entropy > 4.5
 
-analytics_engine = ContentAnalytics()
+    def check_security_posture(self, column_name: str, sample_data: str) -> str:
+        """
+        Example of Security Posture Check.
+        Alerts if a sensitive-sounding column has low entropy (plain text).
+        """
+        sensitive_keywords = ["password", "token", "secret", "cvv", "credit_card", "pin"]
+        name_lower = column_name.lower()
+        
+        is_sensitive_col = any(k in name_lower for k in sensitive_keywords)
+        is_encrypted = self.check_encryption(sample_data)
+        
+        if is_sensitive_col and not is_encrypted:
+            return "CRITICAL: Sensitive Column in Plain Text"
+        elif is_sensitive_col and is_encrypted:
+            return "SECURE: Sensitive Column Encrypted"
+        return "SAFE"
+
+    def calculate_similarity(self, text1: str, text2: str) -> float:
+        return SequenceMatcher(None, text1, text2).ratio()
+
+    def _shannon_entropy(self, data: str) -> float:
+        """Calculates Shannon entropy of string."""
+        if not data:
+            return 0
+        entropy = 0
+        for x in range(256):
+            p_x = float(data.count(chr(x))) / len(data)
+            if p_x > 0:
+                entropy += - p_x * math.log(p_x, 2)
+        return entropy
+
+analytics_engine = AnalyticsEngine()

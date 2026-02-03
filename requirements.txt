@@ -30,3 +30,6 @@ boto3
 pytesseract
 great_expectations
 pillow
+# Visualization
+graphviz
+matplotlib
