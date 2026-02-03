@@ -9,7 +9,7 @@ import structlog
 import time
 from pathlib import Path
 from datetime import datetime
-from docs import Document 
+from docx import Document 
 
 # --- Internal Engines & Connectors ---
 from engine.classification import classification_engine
@@ -142,9 +142,51 @@ def main():
                 if st.checkbox(f"{conn['name']} ({conn['type']})", value=True): targets.append(conn)
             
             if st.button("Start Auto Scan", type="primary"):
-                # ... (Existing Auto Scan Logic) ...
-                results = [] # Placeholder for keeping it short
-                st.success("Auto Scan Completed (Simulated)")
+                results = []
+                with st.status("Scanning targets...") as status:
+                     for t in targets:
+                        status.update(label=f"Scanning {t['name']}...", state="running")
+                        
+                        # Local Scan
+                        if t["type"] == "Local Storage Path":
+                            path=Path(t["details"])
+                            if path.exists():
+                                 for f in path.glob("*"):
+                                     if f.is_file():
+                                         try: 
+                                            with open(f,"rb") as fo:
+                                                res=requests.post(f"{API_URL}/scan/file", headers=headers, files={"file":(f.name,fo)})
+                                                if res.status_code==200:
+                                                    for r in res.json().get("results",[]):
+                                                        if classification_engine.is_false_positive(r["text"],r["type"]): continue
+                                                        results.append({"Source":t["name"],"Table/File Location":f.name,"Type":r["type"],"Data":r["text"],"Category":classification_engine.classify_sensitivity(r["type"])})
+                                         except:pass
+                        
+                        # S3 Scan
+                        elif t["type"] == "S3 Object Storage" and "s3_creds" in t:
+                             c=t["s3_creds"]; s3_connector.connect(c["endpoint"],c["access"],c["secret"],c["bucket"])
+                             for obj in s3_connector.list_files():
+                                 con=s3_connector.get_file_content(obj['Key'])
+                                 if con:
+                                     res=requests.post(f"{API_URL}/scan/file", headers=headers, files={"file":(obj['Key'],io.BytesIO(con))})
+                                     if res.status_code==200:
+                                         for r in res.json().get("results",[]):
+                                             if classification_engine.is_false_positive(r["text"],r["type"]): continue
+                                             results.append({"Source":t["name"],"Table/File Location":obj['Key'],"Type":r["type"],"Data":r["text"],"Category":classification_engine.classify_sensitivity(r["type"])})
+                        
+                        # DB/API Scan (Auto)
+                        elif "Database" in t["type"] or "API" in t["type"]:
+                             internal_type = 'postgresql' if 'Database' in t["type"] else 'api_get'
+                             structured_data = db_connector.scan_source(internal_type, t["details"])
+                             for item in structured_data:
+                                 res = requests.post(f"{API_URL}/scan/text", headers=headers, json={"text": item["value"]})
+                                 if res.status_code == 200:
+                                     for r in res.json().get("results", []):
+                                         if classification_engine.is_false_positive(r["text"], r["type"]): continue
+                                         loc=f"{item['container']} ({item['field']})"
+                                         results.append({"Source":t["name"],"Table/File Location":loc,"Type":r["type"],"Data":r["text"],"Category":classification_engine.classify_sensitivity(r["type"])})
+                     st.session_state["scan_results"] = results
+                     status.update(label="Complete", state="complete")
         
         elif scan_mode == "🎯 TargetedDB Scan (Query Builder)":
             st.subheader("Targeted Database Scanning")
@@ -178,11 +220,6 @@ def main():
                     # Apply Logic
                     filtered_tables = []
                     for t in meta:
-                        # Logic:
-                        # 1. Table name match
-                        # 2. At least ONE column match (if filter set)
-                        # 3. Row count >= filter
-                        
                         match_tbl = filter_tbl.lower() in t["table"].lower()
                         match_col = True
                         if filter_col:
