@@ -227,6 +227,15 @@ function install_dependencies() {
     print_highlight "Installation finished successfully."
 }
 
+function seed_database() {
+    print_highlight "Seeding Database..."
+    # Run the seed script to create tables and initial user
+    python scripts/seed_db.py || {
+        echo "Failed to seed database."
+        exit 1
+    }
+}
+
 function launch_app() {
     print_highlight "Launching Data Discovery System"
     
@@ -250,4 +259,5 @@ check_disk_space
 setup_python_env
 start_infrastructure
 install_dependencies
+seed_database
 launch_app
