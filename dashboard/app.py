@@ -24,6 +24,7 @@ BASE_DIR = Path("data_storage")
 CONFIG_PATH = Path("config/scanner_rules.json")
 LOG_DIR = Path("logs")
 CONNECTIONS_FILE = BASE_DIR / "connections.json"
+PURPOSES_FILE = BASE_DIR / "purposes.json"
 
 BASE_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -98,6 +99,8 @@ def save_connections(conns):
 
 if "data_connections" not in st.session_state:
     st.session_state["data_connections"] = load_connections()
+if "purposes" not in st.session_state:
+    st.session_state["purposes"] = load_purposes()
 
 # Config Logic
 def load_rules_config():
@@ -109,6 +112,17 @@ def save_rules_config(data):
     with open(CONFIG_PATH, "w") as f: json.dump(data, f, indent=2)
     classification_engine.load_config()
     scanner_engine.reload_rules()
+
+# Purpose Logic
+def load_purposes():
+    if PURPOSES_FILE.exists():
+        try:
+            with open(PURPOSES_FILE, "r") as f: return json.load(f)
+        except: return {}
+    return {}
+
+def save_purposes(data):
+    with open(PURPOSES_FILE, "w") as f: json.dump(data, f, indent=2)
 
 # --- Main App ---
 def main():
@@ -443,10 +457,71 @@ def main():
         
         if "scan_results" in st.session_state:
             st.divider()
-            df = pd.DataFrame(st.session_state["scan_results"])
+            results = st.session_state["scan_results"]
+            df = pd.DataFrame(results)
+            
             if not df.empty:
-                st.write("### 🚨 Detected Data")
-                st.dataframe(df, use_container_width=True)
+                # --- Purpose Mapping Integration ---
+                purposes = st.session_state.get("purposes", {})
+                display_df = df.copy()
+                
+                # Add Purpose Column (Map key: Source|Location)
+                display_df["Purpose"] = display_df.apply(lambda x: purposes.get(f"{x['Source']}|{x['Table/File Location']}", ""), axis=1)
+                
+                # Header & Controls
+                c1, c2 = st.columns([3, 1])
+                c1.write("### 🚨 Detected Data & Compliance")
+                show_unmasked = c2.toggle("👁️ Show Unmasked Data", value=False)
+                
+                # Apply Masking
+                if not show_unmasked:
+                     display_df["Data"] = display_df.apply(lambda x: mask_data(x["Data"], x.get("Type")), axis=1)
+                
+                # Interactive Data Table
+                edited_df = st.data_editor(
+                    display_df, 
+                    column_config={
+                        "Source": st.column_config.TextColumn("Source", disabled=True),
+                        "Table/File Location": st.column_config.TextColumn("Location", disabled=True),
+                        "Type": st.column_config.TextColumn("PII Type", disabled=True),
+                        "Data": st.column_config.TextColumn("Sensitive Data Sample", disabled=True),
+                        "Category": st.column_config.TextColumn("Sensitivity", disabled=True),
+                        "Purpose": st.column_config.SelectboxColumn(
+                            "Processing Purpose (UU PDP)",
+                            options=[
+                                "Promosi / Marketing",
+                                "Kontak Darurat / HR",
+                                "Payroll / Gaji",
+                                "Layanan Pelanggan",
+                                "Kepatuhan Hukum",
+                                "Operasional Bisnis",
+                                "Analitik",
+                                "Other"
+                            ],
+                            required=False,
+                            help="Select the business purpose for collecting this data."
+                        )
+                    },
+                    use_container_width=True,
+                    num_rows="fixed",
+                    key="scan_results_editor"
+                )
+                
+                # Save Logic (Sync edited purpose back to session/file)
+                new_purposes = purposes.copy()
+                changes_detected = False
+                
+                for idx, row in edited_df.iterrows():
+                    key = f"{row['Source']}|{row['Table/File Location']}"
+                    current_val = row["Purpose"]
+                    if new_purposes.get(key) != current_val:
+                        new_purposes[key] = current_val
+                        changes_detected = True
+                
+                if changes_detected:
+                    st.session_state["purposes"] = new_purposes
+                    save_purposes(new_purposes)
+                    st.rerun()
 
 if __name__ == "__main__":
     main()
