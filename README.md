@@ -1,10 +1,27 @@
 # Data Discovery System
 
-## Setup
+## Quick Start (One Click)
+
+### Windows
+Double-click `run_windows.bat` in the file explorer.  
+This will automatically:
+- Create a virtual environment
+- Install all dependencies
+- Download required models
+- Launch the API backend and Dashboard
+
+### Linux / Mac / WSL
+Run the following command:
+```bash
+bash one_click.sh
+```
+
+## Manual Setup
 1. **Environment**: Ensure you have Python 3.9+ and Docker installed.
 2. **Install Dependencies**:
    ```bash
    pip install -r requirements.txt
+   python -m spacy download en_core_web_lg
    # For OCR, ensure tesseract is installed on your OS (e.g., `apt-get install tesseract-ocr` or Windows installer)
    ```
 3. **Start Infrastructure**:
