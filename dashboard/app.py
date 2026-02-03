@@ -8,6 +8,7 @@ import structlog
 import time
 from pathlib import Path
 from datetime import datetime
+from docx import Document # Added to read docx locally in frontend for classification context
 
 # --- Internal Engines ---
 from engine.classification import classification_engine
@@ -107,6 +108,22 @@ def mask_data(text, entity_type=None):
     if len(text) <= visible * 2: return "****"
     return f"{text[:visible]}{'*' * (len(text) - visible*2)}{text[-visible:]}"
 
+def read_local_file_content(file_path):
+    """
+    Reads content from local file path for context analysis in the dashboard.
+    Supports txt, csv, docx. (PDF is binary, requires PyMuPDF which is in connector)
+    """
+    try:
+        if file_path.suffix == '.docx':
+            doc = Document(file_path)
+            return "\n".join([para.text for para in doc.paragraphs])
+        # Add basic text support
+        with open(file_path, "rb") as f:
+            content_bytes = f.read()
+            return content_bytes.decode('utf-8', errors='ignore')
+    except Exception:
+        return ""
+
 # --- Main App ---
 def main():
     if "token" not in st.session_state:
@@ -157,21 +174,20 @@ def main():
                             status.update(label=f"Processing {file_path.name}...", state="running")
                             
                             try:
-                                with open(file_path, "rb") as f:
-                                    # Read for context logic (simulated backend logic)
-                                    content_bytes = f.read()
-                                    content_str = content_bytes.decode('utf-8', errors='ignore')
-                                    
-                                    # Auto-Classify Doc Type
-                                    doc_categories = classification_engine.classify_document_category(content_str)
-                                    
-                                    # Entropy Check (Security Posture)
-                                    sec_posture = "SAFE"
-                                    # If file is named sensitive but content is plain
-                                    if analytics_engine.check_security_posture(file_path.name, content_str[:100]) == "CRITICAL: Sensitive Column in Plain Text":
-                                         sec_posture = "CRITICAL (Unencrypted)"
+                                # Pre-read content for dashboard context logic (Classification)
+                                # Note: Actual scanning happened in API via 'files' payload, this is just for the local classification engine logic in this mockup
+                                content_str = read_local_file_content(file_path)
 
-                                    f.seek(0)
+                                # Auto-Classify Doc Type
+                                doc_categories = classification_engine.classify_document_category(content_str)
+                                
+                                # Entropy Check (Security Posture)
+                                sec_posture = "SAFE"
+                                if analytics_engine.check_security_posture(file_path.name, content_str[:100]) == "CRITICAL: Sensitive Column in Plain Text":
+                                        sec_posture = "CRITICAL (Unencrypted)"
+
+                                # Send to API for PII Scanning
+                                with open(file_path, "rb") as f:
                                     files_payload = {"file": (file_path.name, f)}
                                     res = requests.post(f"{API_URL}/scan/file", headers=headers, files=files_payload)
                                     
@@ -197,7 +213,6 @@ def main():
                         status.update(label="✅ Scan Complete!", state="complete", expanded=False)
 
             # File Management Table
-            # Custom UI for file management request
             st.write("### 🗂️ File Management")
             for f in stored_files:
                 c1, c2, c3 = st.columns([6, 1, 1])
@@ -226,7 +241,6 @@ def main():
                     display_df = df.copy()
                     
                     if mask_enabled:
-                        # Apply intelligent masking based on entity type
                         display_df["Detected Data"] = display_df.apply(
                             lambda row: mask_data(row["Detected Data"], row["PII Type"]), 
                             axis=1
@@ -243,7 +257,7 @@ def main():
                         }
                     )
                     
-                    # Audit Log Trigger (Poin 9)
+                    # Audit Log Trigger
                     if not st.session_state.get("audit_logged_scan"):
                         logger.info("scan_viewed", user="admin", record_count=len(df), timestamp=datetime.now().isoformat())
                         st.session_state["audit_logged_scan"] = True
@@ -271,7 +285,6 @@ def main():
         st.title("📜 Immutable Audit Logs")
         st.caption("Tracking all file operations (Delete, Block, Upload, Scan).")
         
-        # Read from local log file
         log_file = LOG_DIR / "audit.log"
         if log_file.exists():
             logs = []
@@ -279,7 +292,7 @@ def main():
                 for line in f:
                     try: logs.append(json.loads(line))
                     except: continue
-            st.dataframe(pd.DataFrame(logs).iloc[::-1], use_container_width=True) # Show newest first
+            st.dataframe(pd.DataFrame(logs).iloc[::-1], use_container_width=True)
 
 if __name__ == "__main__":
     main()
