@@ -108,18 +108,72 @@ function setup_python_env() {
     pip install --upgrade pip
 }
 
-function start_infrastructure() {
-    print_highlight "Starting Infrastructure (Docker)..."
+function install_docker() {
+    print_highlight "Checking Docker installation..."
     
-    if ! command -v docker &> /dev/null; then
-        echo "Error: Docker is not installed. Please install Docker to run the database."
+    if command -v docker &> /dev/null; then
+        echo "Docker is already installed."
+        return 0
+    fi
+    
+    echo "Docker not found. Attempting to install..."
+    
+    if command -v apt-get &> /dev/null; then
+        if [ "$EUID" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
+        
+        echo "Updating apt..."
+        $SUDO apt-get update
+        
+        echo "Installing docker.io and docker-compose..."
+        $SUDO apt-get install -y docker.io docker-compose || {
+            echo "Failed to install docker via apt."
+            return 1
+        }
+        
+        # Add current user to docker group to avoid sudo requirements later
+        # (Only relevant if not running as root)
+        if [ "$EUID" -ne 0 ]; then
+             echo "Adding user $USER to docker group..."
+             $SUDO usermod -aG docker $USER
+             echo "NOTE: You may need to logout and login again for group changes to take effect."
+        fi
+        
+        echo "Docker installed successfully."
+    else
+        echo "Package manager not supported (apt-get not found). Please install Docker manually."
         exit 1
     fi
+}
 
+function start_infrastructure() {
+    install_docker
+
+    print_highlight "Starting Infrastructure (Docker)..."
+    
     # Check if docker daemon is running
     if ! docker info &> /dev/null; then
-        echo "Error: Docker daemon is not running. Please start Docker."
-        exit 1
+        echo "Docker daemon is not running. Attempting to start..."
+        if [ "$EUID" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
+        
+        # Try service command first
+        if command -v service &> /dev/null; then
+            $SUDO service docker start
+        elif command -v systemctl &> /dev/null; then
+            $SUDO systemctl start docker
+        else
+            # WSL 2 fallback mostly
+            if [ -f "/etc/init.d/docker" ]; then
+                 $SUDO /etc/init.d/docker start
+            fi
+        fi
+        
+        sleep 3
+        
+        if ! docker info &> /dev/null; then
+            echo "Error: Failed to start Docker daemon automatically."
+            echo "Please ensure Docker Desktop is running (if on Windows/WSL) or run 'sudo service docker start'."
+            exit 1
+        fi
     fi
     
     # Start DB and Redis
