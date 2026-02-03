@@ -51,6 +51,9 @@ st.markdown("""
     .badge-db { background:#1b5e20; color:white; padding:2px 8px; border-radius:4px; font-size:0.8em; border: 1px solid #66bb6a; }
     .badge-s3 { background:#e65100; color:white; padding:2px 8px; border-radius:4px; font-size:0.8em; border: 1px solid #ff9800; }
     .badge-local { background:#4a148c; color:white; padding:2px 8px; border-radius:4px; font-size:0.8em; border: 1px solid #ab47bc; }
+    
+    /* Rules Table */
+    .rule-box { border:1px solid #555; background:#222; padding:10px; margin-bottom:10px; border-radius:5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -118,24 +121,128 @@ def main():
     page = st.sidebar.radio("Go to", ["📂 Data Explorer", "🗂️ Connections", "🚀 Scan Manager", "⚙️ Rules Engine", "📊 Dashboard", "📜 Audit Logs"])
     headers = {"Authorization": f"Bearer {st.session_state['token']}"}
 
-    # ... Pages: Explorer, Connections (Same) ...
-    # Simplified here...
-    
-    if page == "📂 Data Explorer": st.title("Explorer")
-    elif page == "🗂️ Connections": st.title("Connections")
-    elif page == "⚙️ Rules Engine": st.title("Rules Engine")
-    elif page == "📊 Dashboard": st.title("Dashboard")
-    elif page == "📜 Audit Logs": st.title("Audit Logs")
-    
-    # --- Page: Scan Manager (Enhanced) ---
-    if page == "🚀 Scan Manager":
+    # --- Page: Data Explorer ---
+    if page == "📂 Data Explorer":
+        st.title("📂 Data Explorer")
+        conn_options = {c["name"]: c for c in st.session_state["data_connections"] if "Storage" in c["type"]}
+        selected_conn_name = st.selectbox("Select Storage Source", list(conn_options.keys()) if conn_options else [])
+        if selected_conn_name:
+            conn = conn_options[selected_conn_name]
+            # [Local Logic]
+            if conn["type"] == "Local Storage Path":
+                path = Path(conn["details"])
+                with st.expander(f"📤 Upload to {conn['name']}", expanded=True):
+                    up_files = st.file_uploader("Drag & Drop", accept_multiple_files=True)
+                    if up_files:
+                        for f in up_files: save_uploaded_file(f, path); st.toast(f"Saved: {f.name}")
+                        st.rerun()
+                files = list(path.glob("*")) if path.exists() else []
+                st.write(f"### {len(files)} Items in Local Storage")
+                for f in files:
+                    c1, c2 = st.columns([6, 1])
+                    c1.markdown(f"<div class='file-box'>📄 {f.name}</div>", unsafe_allow_html=True)
+                    if c2.button("🗑️", key=f"d_{f.name}"): os.remove(f); st.rerun()
+            # [S3 Logic]
+            elif conn["type"] == "S3 Object Storage":
+                c = conn.get("s3_creds", {}) 
+                if c:
+                    if s3_connector.bucket_name != c.get("bucket"): s3_connector.connect(c["endpoint"], c["access"], c["secret"], c["bucket"])
+                    files = s3_connector.list_files()
+                    st.write(f"### {len(files)} Objects in Bucket")
+                    with st.expander("☁️ Upload", expanded=False):
+                        up_s3 = st.file_uploader("S3 Upload", accept_multiple_files=True)
+                        if up_s3: 
+                            for f in up_s3: s3_connector.upload_file(f, f.name)
+                            st.rerun()
+                    for f in files:
+                         c1, c2 = st.columns([6, 1])
+                         c1.markdown(f"<div class='file-box'>☁️ {f['Key']}</div>", unsafe_allow_html=True)
+                         if c2.button("🗑️", key=f"d_{f['Key']}"): s3_connector.delete_file(f['Key']); st.rerun()
+
+        # Shared Results
+        if "scan_results" in st.session_state and st.session_state["scan_results"]:
+            st.divider()
+            df = pd.DataFrame(st.session_state["scan_results"])
+            if not df.empty:
+                st.write("### 🚨 Latest Findings")
+                if st.toggle("Privacy Mode", True):
+                    df["Data"] = df.apply(lambda row: mask_data(row["Data"], row["Type"]), axis=1)
+                st.dataframe(df, use_container_width=True)
+
+    # --- Page: Connections ---
+    elif page == "🗂️ Connections":
+        st.title("🗂️ Unified Connection Manager")
+        st.subheader(f"Active Sources ({len(st.session_state['data_connections'])})")
+        
+        conns = st.session_state["data_connections"]
+        for i, conn in enumerate(conns):
+            badge = get_badge_html(conn["type"])
+            display_details = conn.get("details", "")
+            if "s3_creds" in conn: display_details = f"Endpoint={conn['s3_creds']['endpoint']}; Bucket={conn['s3_creds']['bucket']}"
+            
+            with st.container():
+                cols = st.columns([0.7, 0.1, 0.1, 0.1])
+                cols[0].markdown(f"<div class='source-box'><div><strong>{conn['name']}</strong> {badge}<br><small>{display_details}</small></div></div>", unsafe_allow_html=True)
+                if cols[1].button("🔌", key=f"t_{i}"):
+                    if "s3_creds" in conn: 
+                         c = conn["s3_creds"]
+                         suc, msg = s3_connector.connect(c["endpoint"], c["access"], c["secret"], c["bucket"])
+                         if suc: st.toast("Success") 
+                         else: st.error(msg)
+                    elif "Database" in conn["type"]:
+                        suc, msg = db_connector.test_connection('postgresql', conn["details"])
+                        if suc: st.toast("Connected")
+                        else: st.error(msg)
+                    elif "API" in conn["type"]:
+                        suc, msg = db_connector.test_connection('api_get', conn["details"])
+                        if suc: st.toast(msg)
+                        else: st.error(msg)
+                if cols[3].button("🗑️", key=f"d_{i}"):
+                    st.session_state["data_connections"].pop(i)
+                    save_connections(st.session_state["data_connections"])
+                    st.rerun()
+
+        st.divider()
+        with st.expander("➕ Add New Data Source", expanded=False):
+             c1,c2 = st.columns([1,2])
+             ct=c1.selectbox("Type", ["API Endpoint", "PostgreSQL Database", "S3 Object Storage", "Local Storage Path"])
+             cn=c2.text_input("Name")
+             is_val=False; cd=""
+             s3c=None
+             
+             if ct=="Local Storage Path":
+                 p=st.text_input("Path", str(BASE_DIR.absolute()))
+                 if st.button("Add Path"): cd=p; is_val=True
+             elif "Database" in ct:
+                 c1,c2=st.columns(2); h=c1.text_input("Host","localhost"); p=c2.text_input("Port","5432")
+                 u=c1.text_input("User","postgres"); w=c2.text_input("Pass",type="password")
+                 d=st.text_input("DB","postgres")
+                 if st.button("Add DB"): cd=f"postgresql://{u}:{w}@{h}:{p}/{d}"; is_val=True
+             elif ct=="S3 Object Storage":
+                 c1,c2=st.columns(2); e=c1.text_input("Endpoint"); b=c2.text_input("Bucket")
+                 k=c1.text_input("Key"); s=c2.text_input("Secret",type="password")
+                 if st.button("Add S3"): 
+                     if not e.startswith("http"): e="http://"+e
+                     s3c={"endpoint":e,"bucket":b,"access":k,"secret":s}; is_val=True
+             elif ct=="API Endpoint":
+                 u = st.text_input("URL"); 
+                 if st.button("Add API"): cd=u; is_val=True
+
+             if is_val and cn:
+                 nc = {"id":str(time.time()),"name":cn,"type":ct,"details":cd}
+                 if s3c: nc["s3_creds"]=s3c
+                 st.session_state["data_connections"].append(nc)
+                 save_connections(st.session_state["data_connections"])
+                 st.rerun()
+
+    # --- Page: Scan Manager ---
+    elif page == "🚀 Scan Manager":
         st.title("🚀 Unified Scan Manager")
         
         # Mode Selection
         scan_mode = st.radio("Scan Mode", ["🚀 Quick Scan (Auto)", "🎯 TargetedDB Scan (Query Builder)"], horizontal=True)
         
         if scan_mode == "🚀 Quick Scan (Auto)":
-            # (Old Logic)
             st.info("Runs an automatic sample scan on all selected sources.")
             targets = []
             for conn in st.session_state["data_connections"]:
@@ -278,6 +385,110 @@ def main():
             if not df.empty:
                 st.write("### 🚨 Findings Report")
                 st.dataframe(df, use_container_width=True)
+
+    # --- Page: Rules Engine ---
+    elif page == "⚙️ Rules Engine":
+        st.title("⚙️ PII Detection Rules Engine")
+        st.caption("Manage detection patterns. Ensure 1 rule per Entity.")
+        
+        config = load_rules_config()
+        recogs = config.get("custom_recognizers", [])
+        
+        # 1. LIVE PATTERN TESTER
+        with st.expander("🧪 Test a Regex Pattern", expanded=True):
+            cols = st.columns([3, 1])
+            test_regex = cols[0].text_input("Enter Regex Pattern", r"\b\d{16}\b")
+            test_text = st.text_area("Test String (Sample Data)", "Ini adalah NIK saya 3201123412341234 yang valid.")
+            
+            if st.button("Run Test"):
+                try:
+                    matches = re.finditer(test_regex, test_text)
+                    results = [m.group(0) for m in matches]
+                    if results:
+                        st.success(f"✅ Found {len(results)} matches: {results}")
+                    else:
+                        st.warning("No matches found.")
+                except Exception as e:
+                    st.error(f"Regex Error: {e}")
+
+        st.divider()
+
+        # 2. Manage Rules (Force 1 Rule per Entity)
+        st.subheader("Manage Detection Rules")
+        existing_entities = set([r["entity"] for r in recogs])
+        
+        for i, rec in enumerate(recogs):
+            with st.container():
+                with st.expander(f"🧩 {rec['entity']} ({rec['name']})", expanded=False):
+                    c1, c2 = st.columns([3, 1])
+                    new_regex = c1.text_input("Regex", value=rec["regex"], key=f"rex_{i}")
+                    new_score = c2.slider("Score", 0.0, 1.0, rec["score"], key=f"sco_{i}")
+                    new_ctx = st.text_input("Context (comma sep.)", value=",".join(rec.get("context", [])), key=f"ctx_{i}")
+                    is_active = st.checkbox("Active", value=rec.get("active", True), key=f"act_{i}")
+                    
+                    if st.button("🗑️ Delete Rule", key=f"del_rule_{i}"):
+                        recogs.pop(i)
+                        config["custom_recognizers"] = recogs
+                        save_rules_config(config)
+                        st.rerun()
+                    
+                    rec["regex"] = new_regex
+                    rec["score"] = new_score
+                    rec["context"] = [x.strip() for x in new_ctx.split(",") if x.strip()]
+                    rec["active"] = is_active
+
+        st.write("### Add New Rule")
+        with st.form("add_rule_form"):
+            new_entity = st.text_input("Entity Name (Unique)", placeholder="ID_NEW_CARD").upper()
+            new_pattern = st.text_input("Regex Pattern", placeholder=r"\b[A-Z]{3}-\d{4}\b")
+            
+            if st.form_submit_button("Add Rule"):
+                if not new_entity or not new_pattern:
+                    st.error("Entity Name and Regex are required.")
+                elif new_entity in [r["entity"] for r in recogs]:
+                    st.error(f"Rule for {new_entity} already exists! Edit the existing one instead.")
+                else:
+                    new_rule = {
+                        "name": f"{new_entity.lower()}_recognizer",
+                        "entity": new_entity,
+                        "regex": new_pattern,
+                        "score": 0.5,
+                        "context": [],
+                        "active": True
+                    }
+                    recogs.append(new_rule)
+                    config["custom_recognizers"] = recogs
+                    save_rules_config(config)
+                    st.success(f"Added rule for {new_entity}")
+                    st.rerun()
+
+        st.divider()
+        if st.button("💾 SAVE ALL CHANGES", type="primary"):
+            config["custom_recognizers"] = recogs
+            save_rules_config(config)
+            st.success("Configuration Saved & Engine Reloaded!")
+
+    # --- Page: Dashboard ---
+    elif page == "📊 Dashboard":
+        st.title("📊 Security Dashboard")
+        if "scan_results" in st.session_state and st.session_state["scan_results"]:
+             df = pd.DataFrame(st.session_state["scan_results"])
+             if not df.empty:
+                 m1, m2, m3 = st.columns(3)
+                 m1.metric("Findings", len(df))
+                 m2.metric("Critical", len(df[df["Category"].str.contains("Spesifik", na=False)]))
+                 m3.metric("Sources Active", len(st.session_state["data_connections"]))
+                 st.bar_chart(df["Category"].value_counts())
+        else: st.info("No active scan results.")
+
+    # --- Page: Audit Logs ---
+    elif page == "📜 Audit Logs":
+        st.title("📜 Audit Logs")
+        log_file = LOG_DIR / "audit.log"
+        if log_file.exists():
+            with open(log_file, "r") as f:
+                logs = [json.loads(line) for line in f]
+            st.dataframe(pd.DataFrame(logs).iloc[::-1], use_container_width=True)
 
 if __name__ == "__main__":
     main()
