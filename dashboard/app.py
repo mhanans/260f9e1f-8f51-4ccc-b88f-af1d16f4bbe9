@@ -291,12 +291,28 @@ def main():
                  st.bar_chart(df["Category"].value_counts())
         else: st.info("No active scan results.")
     elif page == "📜 Audit Logs": 
-        # (Same as before)
+        # (Fixed Logic)
         st.title("📜 Audit Logs")
         log_file = LOG_DIR / "audit.log"
         if log_file.exists():
-            with open(log_file, "r") as f: logs = [json.loads(line) for line in f]
-            st.dataframe(pd.DataFrame(logs).iloc[::-1], use_container_width=True)
+            logs = []
+            with open(log_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line: continue
+                    try:
+                        # Handle JSON array vs Newline Delimited JSON
+                        if line.startswith("[") and line.endswith("]"):
+                            logs.extend(json.loads(line))
+                        else:
+                            logs.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass # Skip bad lines
+            
+            if logs:
+                st.dataframe(pd.DataFrame(logs).iloc[::-1], use_container_width=True)
+            else:
+                st.info("No logs found.")
     
     # --- Page: Scan Manager (Fixed KeyError) ---
     if page == "🚀 Scan Manager":

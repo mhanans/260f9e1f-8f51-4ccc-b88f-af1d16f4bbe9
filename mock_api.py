@@ -5,10 +5,26 @@ import jwt
 import datetime
 import structlog
 import io
+import json # ADDED
+from pathlib import Path # ADDED
 
 from engine.classification import classification_engine
 from engine.scanner import scanner_engine
 from engine.ocr import ocr_engine
+
+# --- LOGGING SETUP ---
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+audit_log_file = LOG_DIR / "audit.log"
+
+structlog.configure(
+    processors=[
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer()
+    ],
+    logger_factory=structlog.WriteLoggerFactory(file=open(audit_log_file, "a")), # Ensure append mode
+)
+# ---------------------
 
 logger = structlog.get_logger()
 app = FastAPI()
@@ -29,13 +45,25 @@ def login(req: TokenRequest):
             "sub": req.username,
             "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
         }, SECRET_KEY, algorithm="HS256")
+        
+        # LOG LOGIN
+        logger.info("user_login", username=req.username, status="success")
+        
         return {"access_token": token, "token_type": "bearer"}
+    
+    # LOG FAILED LOGIN
+    logger.warning("user_login", username=req.username, status="failed")
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.post("/api/v1/scan/text")
 def scan_text(req: TextScanRequest):
-    logger.info("SCAN TEXT REQUEST", length=len(req.text))
+    # Log the scan event
+    logger.info("scan_text_request", length=len(req.text))
     pdi_results = scanner_engine.analyze_text(req.text)
+    
+    # Log results summary
+    logger.info("scan_text_complete", findings_count=len(pdi_results))
+    
     return {"results": pdi_results}
 
 @app.post("/api/v1/scan/file")
@@ -44,7 +72,8 @@ async def scan_file(file: UploadFile = File(...)):
     filename = file.filename.lower()
     text = ""
 
-    logger.info("SCAN FILE REQUEST", filename=filename, size=len(content))
+    # Log file start
+    logger.info("scan_file_request", filename=filename, size=len(content))
 
     # 1. Determine Extraction Strategy
     if filename.endswith(".pdf"):
@@ -61,11 +90,15 @@ async def scan_file(file: UploadFile = File(...)):
             text = ""
             logger.warning(f"Could not decode text file {filename}")
     
-    logger.info("EXTRACTED TEXT", filename=filename, length=len(text), preview=text[:50])
+    # Log extraction results
+    logger.info("ocr_extraction_complete", filename=filename, extracted_length=len(text))
 
     # 2. Scan Extracted Text
     pdi_results = scanner_engine.analyze_text(text)
     
+    # Log scan findings
+    logger.info("scan_file_complete", filename=filename, findings_count=len(pdi_results))
+
     return {
         "filename": filename,
         "extracted_text_preview": text[:200], # Return larger preview to UI for debug
