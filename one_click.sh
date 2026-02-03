@@ -9,15 +9,14 @@ function print_highlight() {
 }
 
 function check_disk_space() {
-    # Check for at least 1GB free space (approx needed for venv + libs + spacy lg model)
+    # Check for at least 1GB free space
     local required_space_kb=1048576 # 1GB in KB
-    # Use df -k . to get available space in KB for current directory
     local available_space_kb=$(df -k . | awk 'NR==2 {print $4}')
 
     if [ "$available_space_kb" -lt "$required_space_kb" ]; then
         echo "WARNING: Low disk space detected!"
         echo "Available: $((available_space_kb/1024)) MB"
-        echo "Required: ~1000 MB (for dependencies + Spacy large model)"
+        echo "Required: ~1000 MB"
         echo "Installation might fail. Proceeding anyway..."
         sleep 3
     else
@@ -26,71 +25,82 @@ function check_disk_space() {
 }
 
 function setup_python_env() {
+    local target_ver="3.13"
+    local python_exec="python${target_ver}"
+    local venv_pkg="${python_exec}-venv"
+
+    print_highlight "Checking for Python ${target_ver}..."
+
     # 1. Check Python installation
-    if ! command -v python3 &> /dev/null; then
-        echo "Error: python3 could not be found."
-        echo "Attempting to install python3..."
+    if ! command -v "$python_exec" &> /dev/null; then
+        echo "Python ${target_ver} not found. Attempting to install via PPA..."
+        
         if command -v apt-get &> /dev/null; then
+             # Suggest sudo if not root
              if [ "$EUID" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
-             $SUDO apt-get update && $SUDO apt-get install -y python3
+             
+             # Install software-properties-common for add-apt-repository
+             $SUDO apt-get update
+             $SUDO apt-get install -y software-properties-common
+             
+             # Add deadsnakes PPA which usually has the bleeding edge python versions
+             echo "Adding deadsnakes PPA..."
+             $SUDO add-apt-repository -y ppa:deadsnakes/ppa
+             $SUDO apt-get update
+             
+             echo "Installing ${python_exec} and ${venv_pkg}..."
+             $SUDO apt-get install -y "$python_exec" "$venv_pkg" || {
+                 echo "Failed to install ${python_exec}. It might not be available for your distro release yet."
+                 echo "Falling back to system default python3..."
+                 python_exec="python3"
+             }
         else
-             echo "Please install python3 manually."
-             exit 1
+             echo "Apt not found. Cannot auto-install Python ${target_ver}."
+             echo "Falling back to system default python3..."
+             python_exec="python3"
         fi
     fi
+
+    # Final check of what we are using
+    echo "Using Python executable: $python_exec"
+    $python_exec --version
 
     local env_dir="env"
 
     # Check for broken environment (dir exists but activate script missing)
     if [ -d "$env_dir" ] && [ ! -f "$env_dir/bin/activate" ]; then
-        echo "Detected broken virtual environment (missing activate script)."
-        echo "Removing broken '$env_dir' directory..."
+        echo "Detected broken virtual environment. Recreating..."
         rm -rf "$env_dir"
     fi
+    
+    # Check if existing env is the wrong python version (optional, but good for "latest" request)
+    # For simplicity, if env exists, we trust it or the user can delete it. 
+    # But to enforce upgrade, let's leave it unless broken.
 
     if [ ! -d "$env_dir" ]; then
-        print_highlight "Creating virtual environment in $env_dir..."
+        print_highlight "Creating virtual environment in $env_dir using $python_exec..."
         
-        # Try creating venv; if it fails, try to install the missing venv package
-        if ! python3 -m venv "$env_dir"; then
-            echo "----------------------------------------------------------------"
-            echo "Venv creation failed. It seems 'python3-venv' is missing."
-            echo "Attempting to install it automatically..."
-            
-            # Get python version MAJOR.MINOR (e.g. 3.12)
-            PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-            PKG_NAME="python${PY_VER}-venv"
-            
-            echo "Detected Python version: $PY_VER"
-            echo "Installing packages: $PKG_NAME python3-venv"
-
-            if command -v apt-get &> /dev/null; then
-                 # Check for root
-                 if [ "$EUID" -ne 0 ]; then
-                    SUDO="sudo"
-                 else
-                    SUDO=""
-                 fi
-                 
-                 echo "Updating apt cache..."
-                 $SUDO apt-get update
-                 
-                 echo "Installing venv package..."
-                 # Try specific version first, then generic, or both
-                 $SUDO apt-get install -y "$PKG_NAME" python3-venv
-                 
-                 echo "Retrying venv creation..."
-                 python3 -m venv "$env_dir" || {
-                     echo "Failed again. Please manually run: $SUDO apt install $PKG_NAME"
-                     exit 1
-                 }
-            else
-                echo "Package manager (apt-get) not found. Please manually install python3-venv."
-                exit 1
-            fi
+        if ! "$python_exec" -m venv "$env_dir"; then
+             echo "Failed to create venv. Attempting to install venv package for $python_exec..."
+             if [ "$EUID" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
+             
+             # Try to install the venv package matching the chosen python
+             # Extract version if we fell back to 'python3'
+             if [ "$python_exec" == "python3" ]; then
+                 PY_FULL=$($python_exec -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+                 venv_pkg="python${PY_FULL}-venv"
+             fi
+             
+             $SUDO apt-get install -y "$venv_pkg"
+             
+             echo "Retrying..."
+             "$python_exec" -m venv "$env_dir" || {
+                 echo "Failed to create virtual environment. Aborting."
+                 exit 1
+             }
         fi
     else
-        echo "Virtual environment already exists in $env_dir."
+        echo "Virtual environment already exists."
     fi
 
     # 3. Activate environment
@@ -102,26 +112,27 @@ function setup_python_env() {
     echo "Environment activated: $VIRTUAL_ENV"
     
     # 4. Upgrade pip
+    print_highlight "Upgrading pip to latest..."
     pip install --upgrade pip
 }
 
 function install_dependencies() {
-    print_highlight "Installing requirements from requirements.txt..."
-    pip install -r requirements.txt || {
+    print_highlight "Installing latest dependencies..."
+    # -U upgrades everything to the latest version found in PyPI
+    pip install -U -r requirements.txt || {
         echo "Failed to install dependencies."
         exit 1
     }
     
-    # Check if spacy model is already installed to avoid re-downloading huge file
-    if ! python3 -c "import spacy; spacy.load('en_core_web_lg')" 2>/dev/null; then
+    # Spacy model
+    if ! python -c "import spacy; spacy.load('en_core_web_lg')" 2>/dev/null; then
         print_highlight "Downloading Spacy model (en_core_web_lg)..."
         python -m spacy download en_core_web_lg || {
-            echo "Failed to download Spacy model. You might be out of disk space."
-            echo "Try checking space and running again."
+            echo "Failed to download Spacy model."
             exit 1
         }
     else
-        echo "Spacy model 'en_core_web_lg' already found. Skipping download."
+        echo "Spacy model already installed."
     fi
     
     print_highlight "Installation finished successfully."
@@ -131,7 +142,6 @@ function launch_app() {
     print_highlight "Launching Data Discovery System"
     
     echo "Starting Backend (FastAPI)..."
-    # Run uvicorn in the background
     python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
     BACKEND_PID=$!
     
@@ -139,16 +149,12 @@ function launch_app() {
     sleep 5
     
     echo "Starting Dashboard (Streamlit)..."
-    # Run streamlit in the foreground
     python -m streamlit run dashboard/app.py
     
-    # When streamlit exits, kill the backend
     kill $BACKEND_PID
 }
 
 # Main script execution
-
-# Ensure we are in the script's directory
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 check_disk_space
