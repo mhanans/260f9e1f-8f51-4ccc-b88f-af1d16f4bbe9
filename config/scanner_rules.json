@@ -1,0 +1,55 @@
+{
+  "sensitivity_map": {
+    "ID_NIK": "Spesifik (Identitas)",
+    "ID_NPWP": "Spesifik (Keuangan)",
+    "CREDIT_CARD": "Spesifik (Keuangan)",
+    "HEALTH_DATA": "Spesifik (Kesehatan)",
+    "BIOMETRIC": "Spesifik (Biometrik)",
+    "CRIMINAL_RECORD": "Spesifik (Catatan Kejahatan)",
+    "CHILD_DATA": "Spesifik (Anak)",
+    "RELIGION": "Spesifik (Data Keyakinan)",
+    "ID_PHONE_ID": "Spesifik (Identitas)",
+    "PERSON": "Umum (Nama)",
+    "GENDER": "Umum (Jenis Kelamin)",
+    "PHONE_NUMBER": "Umum (Kontak)",
+    "EMAIL_ADDRESS": "Umum (Kontak)",
+    "LOCATION": "Umum (Alamat)",
+    "DATE_TIME": "Umum (Waktu)"
+  },
+  "custom_recognizers": [
+    {
+      "name": "id_nik_recognizer",
+      "entity": "ID_NIK",
+      "regex": "\\b\\d{16}\\b",
+      "score": 0.6,
+      "context": ["nik", "nomor", "induk", "kependudukan", "ktp", "identitas"],
+      "active": true
+    },
+    {
+      "name": "id_npwp_recognizer",
+      "entity": "ID_NPWP",
+      "regex": "\\b\\d{2}\\.\\d{3}\\.\\d{3}\\.\\d{1}-\\d{3}\\.\\d{3}\\b",
+      "score": 0.6,
+      "context": ["npwp", "pajak", "wajib"],
+      "active": true
+    },
+    {
+      "name": "id_phone_recognizer",
+      "entity": "ID_PHONE_ID",
+      "regex": "\\b(\\+62|62|0)8[1-9][0-9]{6,11}\\b",
+      "score": 0.5,
+      "context": ["telp", "telepon", "hp", "handphone", "wa", "whatsapp"],
+      "active": true
+    }
+  ],
+  "deny_list": [
+    "NIK", "Nomor Induk Kependudukan", "Nama", "Tempat", "Tanggal", "Lahir",
+    "Alamat", "Nomor", "NPWP", "Rekening", "Jenis Kelamin", "Ibu Kandung",
+    "Status", "Agama", "Pekerjaan", "Kewarganegaraan", "Berlaku Hingga",
+    "Golongan Darah", "Kel/Desa", "Kecamatan", "RTRW", "Kelurahan", "Desa",
+    "Konfigurasi", "Menggunakan", "Halaman", "Page", "Total"
+  ],
+  "exclude_entities": [
+      "DATE_TIME", "NRP"
+  ]
+}

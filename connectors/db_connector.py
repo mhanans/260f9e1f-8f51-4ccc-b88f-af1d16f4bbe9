@@ -17,7 +17,8 @@ class GenericDBConnector:
                 conn.close()
                 return True, "Connected"
             elif type == 'api_get':
-                res = requests.get(connection_string, timeout=5)
+                # Try simple GET
+                res = requests.get(connection_string, timeout=10)
                 if res.status_code == 200:
                     return True, f"API Reachable ({res.status_code})"
                 return False, f"API Error {res.status_code}"
@@ -25,10 +26,31 @@ class GenericDBConnector:
         except Exception as e:
             return False, str(e)
 
+    def _flatten_api_response(self, data: Any, parent_key: str = '') -> List[Dict[str, Any]]:
+        """Recursively flattens JSON to extract all leaf values."""
+        items = []
+        if isinstance(data, dict):
+            for k, v in data.items():
+                new_key = f"{parent_key}.{k}" if parent_key else k
+                items.extend(self._flatten_api_response(v, new_key))
+        elif isinstance(data, list):
+            for i, v in enumerate(data):
+                new_key = f"{parent_key}[{i}]"
+                items.extend(self._flatten_api_response(v, new_key))
+        else:
+            # Leaf node
+            items.append({
+                "source_type": "api",
+                "container": "API Response",
+                "field": parent_key,
+                "value": str(data)
+            })
+        return items
+
     def scan_source(self, type: str, connection_string: str, query_or_params: str = None) -> List[Dict[str, Any]]:
         """
         Fetches data samples in a structured format specifically for column-level tracking.
-        Returns: List of {"table": str, "column": str, "value": str} 
+        Returns: List of {"source_type", "container", "field", "value"} 
         """
         results = []
         try:
@@ -72,31 +94,25 @@ class GenericDBConnector:
                 conn.close()
             
             elif type == 'api_get':
-                res = requests.get(connection_string, timeout=10)
-                if res.status_code == 200:
-                    try:
-                        data = res.json()
-                        # Flatten JSON and attempt to key by field
-                        if isinstance(data, list):
-                            for idx, item in enumerate(data):
-                                if isinstance(item, dict):
-                                    for key, val in item.items():
-                                        results.append({
-                                            "source_type": "api",
-                                            "container": f"Record #{idx}",
-                                            "field": key,
-                                            "value": str(val)
-                                        })
-                        elif isinstance(data, dict):
-                             for key, val in data.items():
-                                 results.append({
-                                     "source_type": "api",
-                                     "container": "Root Object",
-                                     "field": key,
-                                     "value": str(val)
-                                 })
-                    except:
-                        pass
+                try:
+                    res = requests.get(connection_string, timeout=15)
+                    if res.status_code == 200:
+                        try:
+                            # Try parsing as JSON first
+                            json_data = res.json()
+                            results = self._flatten_api_response(json_data)
+                        except json.JSONDecodeError:
+                            # Fallback: simple text scan if not JSON
+                            results.append({
+                                "source_type": "api",
+                                "container": "Raw Text",
+                                "field": "response.text",
+                                "value": res.text
+                            })
+                    else:
+                        logger.error(f"API returned status {res.status_code}")
+                except Exception as req_err:
+                     logger.error(f"Request failed: {req_err}")
 
         except Exception as e:
             logger.error(f"Scan Source Error ({type}): {e}")

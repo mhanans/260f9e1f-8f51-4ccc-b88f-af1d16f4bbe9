@@ -1,87 +1,81 @@
 from presidio_analyzer import AnalyzerEngine, PatternRecognizer, RecognizerResult, Pattern
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 import re
+import json
+from pathlib import Path
+
+CONFIG_PATH = Path("config/scanner_rules.json")
 
 class CustomPIIScanner:
     def __init__(self):
         # Initialize Presidio Analyzer
-        # Using 'en' model but adding significant filtering for Indonesian contexts
         self.analyzer = AnalyzerEngine()
         
-        # 1. Disable Noise Recognizers (US-centric low value ones for this context)
+        # 1. Disable Noise Recognizers (Hardcoded static noise removal)
         useless_recognizers = [
             "USPassportRecognizer", "UsBankRecognizer", "UsItinRecognizer", "UsLicenseRecognizer"
         ]
-        
-        # Filter out these recognizers
         self.analyzer.registry.recognizers = [
             r for r in self.analyzer.registry.recognizers 
             if r.name not in useless_recognizers
         ]
 
-        self._add_custom_recognizers()
-        self._add_deny_list()
+        self.deny_words = []
+        self.exclude_entities = []
+        
+        # Load Dynamic Rules
+        self.reload_rules()
 
-    def _add_deny_list(self):
-        # 2. Deny List (Common headers that trigger FP for Person/NRP)
-        deny_list = [
-            "NIK", "Nomor Induk Kependudukan", "Nama", "Tempat", "Tanggal", "Lahir",
-            "Alamat", "Nomor", "NPWP", "Rekening", "Jenis Kelamin", "Ibu Kandung",
-            "Status", "Agama", "Pekerjaan", "Kewarganegaraan", "Berlaku Hingga",
-            "Golongan Darah", "Kel/Desa", "Kecamatan", "RTRW", "Kelurahan", "Desa",
-            "Konfigurasi", "Menggunakan", "Halaman", "Page", "Total"
+    def reload_rules(self):
+        """Loads Custom Recognizers and Deny List from JSON."""
+        if not CONFIG_PATH.exists(): return
+
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                data = json.load(f)
+                
+                # A. Load Deny List
+                self.deny_words = data.get("deny_list", [])
+                if self.deny_words:
+                    # Remove old deny recognizer if exists
+                    self._remove_recognizer("indonesian_header_deny")
+                    
+                    deny_recognizer = PatternRecognizer(
+                        supported_entity="DENY_LIST",
+                        name="indonesian_header_deny",
+                        deny_list=self.deny_words
+                    )
+                    self.analyzer.registry.add_recognizer(deny_recognizer)
+                
+                # B. Load Custom Regex Recognizers
+                customs = data.get("custom_recognizers", [])
+                for c in customs:
+                    if not c.get("active", True):
+                        self._remove_recognizer(c["name"])
+                        continue
+
+                    # Add or Update
+                    self._remove_recognizer(c["name"]) # Remove first to avoid dupe
+                    
+                    pat = Pattern(name=f"{c['name']}_pattern", regex=c["regex"], score=c["score"])
+                    rec = PatternRecognizer(
+                        supported_entity=c["entity"],
+                        name=c["name"],
+                        patterns=[pat],
+                        context=c.get("context", [])
+                    )
+                    self.analyzer.registry.add_recognizer(rec)
+                
+                # C. Exclude Entities list
+                self.exclude_entities = data.get("exclude_entities", [])
+
+        except Exception as e:
+            print(f"Error loading scanner rules: {e}")
+
+    def _remove_recognizer(self, name):
+        self.analyzer.registry.recognizers = [
+            r for r in self.analyzer.registry.recognizers if r.name != name
         ]
-        
-        deny_recognizer = PatternRecognizer(
-            supported_entity="DENY_LIST",
-            name="indonesian_header_deny",
-            deny_list=deny_list
-        )
-        self.analyzer.registry.add_recognizer(deny_recognizer)
-
-    def _add_custom_recognizers(self):
-        # 3. Enhanced NIK Recognizer with Context
-        nik_pattern = Pattern(
-            name="nik_pattern",
-            regex=r"\b\d{16}\b",
-            score=0.6 
-        )
-        nik_context = ["nik", "nomor", "induk", "kependudukan", "ktp", "identitas"]
-        nik_recognizer = PatternRecognizer(
-            supported_entity="ID_NIK",
-            name="id_nik_recognizer",
-            patterns=[nik_pattern],
-            context=nik_context
-        )
-        self.analyzer.registry.add_recognizer(nik_recognizer)
-
-        # 4. Enhanced NPWP with Context
-        npwp_pattern = Pattern(
-            name="npwp_pattern",
-            regex=r"\b\d{2}\.\d{3}\.\d{3}\.\d{1}-\d{3}\.\d{3}\b",
-            score=0.6
-        )
-        npwp_recognizer = PatternRecognizer(
-            supported_entity="ID_NPWP",
-            name="id_npwp_recognizer",
-            patterns=[npwp_pattern],
-            context=["npwp", "pajak", "wajib"]
-        )
-        self.analyzer.registry.add_recognizer(npwp_recognizer)
-        
-        # Indonesian Phone Number (+62 or 08)
-        phone_pattern = Pattern(
-             name="phone_pattern",
-             regex=r"\b(\+62|62|0)8[1-9][0-9]{6,11}\b",
-             score=0.5
-        )
-        phone_recognizer = PatternRecognizer(
-             supported_entity="ID_PHONE_ID",
-             name="id_phone_recognizer",
-             patterns=[phone_pattern],
-             context=["telp", "telepon", "hp", "handphone", "wa", "whatsapp"]
-        )
-        self.analyzer.registry.add_recognizer(phone_recognizer)
 
     def analyze_text(self, text: str) -> list[dict]:
         # 5. Threshold Filter (Score > 0.4)
@@ -93,20 +87,20 @@ class CustomPIIScanner:
         
         output = []
         for res in results:
-            if res.entity_type == "DENY_LIST":
-                continue
+            if res.entity_type == "DENY_LIST": continue
+            
+            # Helper to check excludes
+            if res.entity_type in self.exclude_entities: continue
 
             extracted_text = text[res.start:res.end]
             
-            # Additional logic to skip pure header words even if Presidio tagged them
-            # (Double-check safety for words like 'NIK' appearing as Person)
-            if extracted_text.lower() in [x.lower() for x in self.analyzer.registry.recognizers[-1].deny_list]: 
+            # Double check deny list for strictness
+            if extracted_text.lower() in [x.lower() for x in self.deny_words]: 
                  continue
 
             # Skip common False Positives for DATE_TIME that look like coordinates
             if res.entity_type == "DATE_TIME":
-                if re.match(r"^-?\d{1,3}\.\d+$", extracted_text):
-                    continue
+                if re.match(r"^-?\d{1,3}\.\d+$", extracted_text): continue
 
             output.append({
                 "type": res.entity_type,
