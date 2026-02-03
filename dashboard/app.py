@@ -94,8 +94,20 @@ def load_connections():
         except: return []
     return [{"id": "local_default", "name": "Default Local Storage", "type": "Local Storage Path", "details": str(BASE_DIR.absolute())}]
 
+
 def save_connections(conns):
     with open(CONNECTIONS_FILE, "w") as f: json.dump(conns, f, indent=2)
+
+# Purpose Logic
+def load_purposes():
+    if PURPOSES_FILE.exists():
+        try:
+            with open(PURPOSES_FILE, "r") as f: return json.load(f)
+        except: return {}
+    return {}
+
+def save_purposes(data):
+    with open(PURPOSES_FILE, "w") as f: json.dump(data, f, indent=2)
 
 if "data_connections" not in st.session_state:
     st.session_state["data_connections"] = load_connections()
@@ -113,16 +125,7 @@ def save_rules_config(data):
     classification_engine.load_config()
     scanner_engine.reload_rules()
 
-# Purpose Logic
-def load_purposes():
-    if PURPOSES_FILE.exists():
-        try:
-            with open(PURPOSES_FILE, "r") as f: return json.load(f)
-        except: return {}
-    return {}
 
-def save_purposes(data):
-    with open(PURPOSES_FILE, "w") as f: json.dump(data, f, indent=2)
 
 # --- Main App ---
 def main():
