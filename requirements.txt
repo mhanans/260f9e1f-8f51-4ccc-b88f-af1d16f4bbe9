@@ -17,7 +17,7 @@ openpyxl
 docx2txt
 matplotlib
 plotly
-altair
+altair<5.0.0
 watchdog
 pytest
 black
