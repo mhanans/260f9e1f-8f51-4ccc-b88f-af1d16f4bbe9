@@ -1,7 +1,11 @@
 import sys
+import os
 from pathlib import Path
-# Add parent directory to path to allow imports from root
-sys.path.append(str(Path(__file__).parent.parent.absolute()))
+
+# Add project root to sys.path
+PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import streamlit as st
 import requests
