@@ -46,7 +46,7 @@ structlog.configure(
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.JSONRenderer()
     ],
-    logger_factory=structlog.WriteLoggerFactory(file=open(LOG_DIR / "audit.log", "a")),
+    logger_factory=structlog.WriteLoggerFactory(file=sys.stdout),
 )
 logger = structlog.get_logger()
 
@@ -144,7 +144,7 @@ def main():
     if "token" not in st.session_state: login(); return
 
     st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Go to", ["📂 Data Explorer", "🗂️ Connections", "🚀 Scan Manager", "⚙️ Rules Engine", "📊 Dashboard", "📜 Audit Logs"])
+    page = st.sidebar.radio("Go to", ["📂 Data Explorer", "🗂️ Connections", "🚀 Scan Manager", "🔗 Data Lineage", "⚙️ Rules Engine", "📊 Dashboard", "📜 Audit Logs"])
     headers = {"Authorization": f"Bearer {st.session_state['token']}"}
 
     # ... Pages: Explorer, Connections (Same) ...
@@ -320,28 +320,96 @@ def main():
                  st.bar_chart(df["Category"].value_counts())
         else: st.info("No active scan results.")
     elif page == "📜 Audit Logs": 
-        # (Fixed Logic)
+        # (Fetched from DB via API)
         st.title("📜 Audit Logs")
-        log_file = LOG_DIR / "audit.log"
-        if log_file.exists():
-            logs = []
-            with open(log_file, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line: continue
-                    try:
-                        # Handle JSON array vs Newline Delimited JSON
-                        if line.startswith("[") and line.endswith("]"):
-                            logs.extend(json.loads(line))
-                        else:
-                            logs.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        pass # Skip bad lines
-            
-            if logs:
-                st.dataframe(pd.DataFrame(logs).iloc[::-1], use_container_width=True)
+        try:
+            res = requests.get(f"{API_URL}/audit/", headers=headers, params={"limit": 100})
+            if res.status_code == 200:
+                logs = res.json()
+                if logs:
+                    df_logs = pd.DataFrame(logs)
+                    
+                    # Optional column reordering or cleanup
+                    if "id" in df_logs.columns:
+                        cols = ["timestamp", "user_email", "action", "endpoint", "ip_address", "details"]
+                        # Filter only existing columns
+                        cols = [c for c in cols if c in df_logs.columns]
+                        df_logs = df_logs[cols]
+                    
+                    st.dataframe(df_logs, use_container_width=True)
+                else:
+                    st.info("No audit logs found in database.")
             else:
-                st.info("No logs found.")
+                st.error(f"Failed to fetch logs: {res.status_code} - {res.text}")
+        except Exception as e:
+            st.error(f"Error connecting to API: {e}")
+    
+    # --- Page: Data Lineage ---
+    elif page == "🔗 Data Lineage":
+        st.title("🔗 Data Lineage & Flow")
+        st.caption("Visualize data movement, transformations, and PII propagation.")
+        
+        from lineage.graph import lineage_engine
+        
+        tab1, tab2 = st.tabs(["🧩 SQL Parser", "✍️ Manual Builder"])
+        
+        with tab1:
+            st.subheader("Extract Lineage from SQL")
+            sql_input = st.text_area("Paste SQL Query (CREATE, INSERT, SELECT)", height=150, placeholder="CREATE TABLE stg_users AS SELECT id, email as user_email FROM raw_users")
+            if st.button("Analyze SQL"):
+                if sql_input:
+                    lineage_engine.parse_sql(sql_input)
+                    st.success("Parsed successfully! Check the graph below.")
+                else:
+                    st.warning("Please enter SQL.")
+        
+        with tab2:
+            st.subheader("Manual Flow Injection")
+            c1, c2, c3 = st.columns(3)
+            src = c1.text_input("Source Node", placeholder="Script.py")
+            tgt = c2.text_input("Target Node", placeholder="Warehouse.Table")
+            desc = c3.text_input("Description", placeholder="ETL Process")
+            if st.button("Add Flow"):
+                if src and tgt:
+                    lineage_engine.add_manual_lineage(src, tgt, desc)
+                    st.success(f"Added: {src} -> {tgt}")
+        
+        st.divider()
+        st.subheader("🕸️ Lineage Graph")
+        
+        graph_data = lineage_engine.get_graph()
+        nodes = graph_data["nodes"]
+        edges = graph_data["edges"]
+        
+        if not nodes and not edges:
+            st.info("Graph is empty. Add SQL or Manual flows to visualize.")
+        else:
+            # Simple Visualization using Graphviz
+            import graphviz
+            dot = graphviz.Digraph(comment='Data Lineage', graph_attr={'rankdir': 'LR', 'bgcolor': '#0e1117'})
+            
+            for n in nodes:
+                # Style based on type
+                color = "lightblue"
+                shape = "box"
+                if n["type"] == "column": 
+                    color = "navajowhite"
+                    shape = "ellipse"
+                
+                label = f"{n['label']}\n({n['type']})"
+                if n.get("pii_present"):
+                    label += f"\n⚠️ {n['data'].get('pii_type')}"
+                    color = "salmon"
+                
+                dot.node(n["id"], label, shape=shape, style="filled", fillcolor=color)
+            
+            for e in edges:
+                dot.edge(e["source"], e["target"], label=e["transformation"] or e["label"])
+            
+            st.graphviz_chart(dot)
+            
+            with st.expander("Show Raw JSON"):
+                st.json(graph_data)
     
     # --- Page: Scan Manager (Fixed KeyError) ---
     if page == "🚀 Scan Manager":
