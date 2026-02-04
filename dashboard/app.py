@@ -10,6 +10,10 @@ import time
 from pathlib import Path
 from datetime import datetime
 from docx import Document 
+import sys
+
+# Add parent directory to path to allow imports from root
+sys.path.append(str(Path(__file__).parent.parent.absolute()))
 
 # --- Internal Engines & Connectors ---
 from engine.classification import classification_engine
