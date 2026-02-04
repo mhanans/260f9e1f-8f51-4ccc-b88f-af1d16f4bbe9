@@ -7,6 +7,10 @@ PROJECT_ROOT = Path(__file__).parent.parent.absolute()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+print(f"DEBUG: sys.path includes: {sys.path[:3]}")
+print(f"DEBUG: CWD is: {os.getcwd()}")
+print(f"DEBUG: Project Root is: {PROJECT_ROOT}")
+
 import streamlit as st
 import requests
 import pandas as pd

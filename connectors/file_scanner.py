@@ -109,17 +109,6 @@ class FileScanner:
             wb = openpyxl.load_workbook(filename=io.BytesIO(content), data_only=True)
             for sheet in wb.sheetnames:
                 ws = wb[sheet]
-                for row in ws.iter_rows(values_only=True):
-                    # Rough row text
-                    row_text = " ".join([str(c) for c in row if c is not None])
-                    if row_text.strip():
-                         # We treat row as a chunk for location precision
-                         # If we want cell precision, we need to iterate cells. 
-                         # For now, Row granularity is good.
-                         # Need row index? iter_rows doesn't give it easily in values_only
-                         pass
-                
-                # Re-iterate with index
                 for i, row in enumerate(ws.iter_rows(values_only=True), start=1):
                      text_parts = []
                      for j, cell in enumerate(row, start=1):
