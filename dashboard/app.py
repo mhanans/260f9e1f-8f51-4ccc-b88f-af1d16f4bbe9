@@ -351,19 +351,43 @@ def main():
         
         from lineage.graph import lineage_engine
         
-        tab1, tab2 = st.tabs(["🧩 SQL Parser", "✍️ Manual Builder"])
+        tab1, tab2, tab3 = st.tabs(["🧩 SQL Parser (Simulation)", "🤖 Automated Scan (DB + Logs)", "✍️ Manual Builder"])
         
         with tab1:
-            st.subheader("Extract Lineage from SQL")
-            sql_input = st.text_area("Paste SQL Query (CREATE, INSERT, SELECT)", height=150, placeholder="CREATE TABLE stg_users AS SELECT id, email as user_email FROM raw_users")
+            st.subheader("Extract Lineage from SQL (Simulation Mode)")
+            st.caption("Quickly visualize SQL transformations without connecting to a DB.")
+            sql_input = st.text_area("Paste SQL Query", height=150, placeholder="CREATE TABLE stg_users AS SELECT id, email as user_email FROM raw_users")
             if st.button("Analyze SQL"):
                 if sql_input:
                     lineage_engine.parse_sql(sql_input)
-                    st.success("Parsed successfully! Check the graph below.")
-                else:
-                    st.warning("Please enter SQL.")
+                    st.success("Parsed successfully!")
         
         with tab2:
+            st.subheader("Data-Driven Lineage (Real Metadata + PII Scan)")
+            st.caption("Connects to actual DB to fetch schema, scan for PII, and map lineage from logs.")
+            
+            db_conns = [c for c in st.session_state["data_connections"] if "Database" in c["type"]]
+            if not db_conns:
+                st.warning("No Database Connections found. Add one in 'Connections' page.")
+            else:
+                sel_conn_name = st.selectbox("Select Database Source", [c["name"] for c in db_conns])
+                sel_conn = next(c for c in db_conns if c["name"] == sel_conn_name)
+                
+                sql_logs = st.text_area("Paste SQL Audit Logs (Optional)", height=100, placeholder="INSERT INTO target SELECT * FROM source; ...")
+                
+                if st.button("🚀 Build Rich Lineage"):
+                    with st.spinner("Fetching Metadata & Scanning PII..."):
+                        # Extract Logs list
+                        logs_list = [l.strip() for l in sql_logs.split(';') if l.strip()]
+                        
+                        lineage_engine.build_automated_lineage(
+                            connection_string=sel_conn["details"],
+                            db_type='postgresql', # Defaulting to PG per current support
+                            sql_logs=logs_list
+                        )
+                        st.success("Lineage Graph built from actual Metadata & PII Scans!")
+
+        with tab3:
             st.subheader("Manual Flow Injection")
             c1, c2, c3 = st.columns(3)
             src = c1.text_input("Source Node", placeholder="Script.py")
