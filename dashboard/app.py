@@ -405,87 +405,100 @@ def main():
         st.subheader("🕸️ Lineage Graph")
         
         # --- Visualization Controls ---
-        c1, c2 = st.columns([1, 2])
-        show_cols = c1.toggle("Show Column Level Lineage", value=True)
+        c1, c2, c3 = st.columns([1, 2, 2])
+        show_cols = c1.toggle("Show Columns", value=True)
+        show_pii_only = c1.toggle("Show PII Only", value=False)
         
         graph_data = lineage_engine.get_graph()
         nodes = graph_data["nodes"]
         edges = graph_data["edges"]
         
-        # Filter for Column Toggle
+        # Filter Logic
+        if show_pii_only:
+            # Keep nodes that have PII OR are parents of PII nodes OR are connected to PII flow
+            # Simplified: Keep PII nodes + Tables containing them
+            pii_ids = {n["id"] for n in nodes if n.get("pii_present")}
+            nodes = [n for n in nodes if n["id"] in pii_ids or n["type"] in ["table", "bucket", "file"]] # Keep containers for context
+            edges = [e for e in edges if e["source"] in [n["id"] for n in nodes] and e["target"] in [n["id"] for n in nodes]]
+
         if not show_cols:
             nodes = [n for n in nodes if n["type"] != "column"]
             edges = [e for e in edges if "column" not in e["source"] and "column" not in e["target"]]
             
-        # Impact Analysis Selector
-        pii_nodes = [n["id"] for n in nodes if n.get("pii_present")]
-        impact_node = c2.selectbox("🔍 Impact Analysis (Select PII Node)", ["None"] + pii_nodes)
+        # Analysis Selectors
+        pii_node_ids = [n["id"] for n in nodes if n.get("pii_present")]
+        selected_node = c2.selectbox("🔍 Trace Analysis (Select Node)", ["None"] + sorted([n["id"] for n in nodes]))
         
-        impact_set = set()
-        if impact_node != "None":
-            impact_set = lineage_engine.get_impact_path(impact_node)
-            st.caption(f"📉 Impact flows to {len(impact_set)-1} downstream nodes.")
+        upstream_set = set()
+        downstream_set = set()
+        
+        if selected_node != "None":
+            downstream_set = lineage_engine.get_impact_path(selected_node)
+            upstream_set = lineage_engine.get_upstream_path(selected_node)
+            c3.info(f"Origin: {len(upstream_set)-1} nodes | Impact: {len(downstream_set)-1} nodes")
 
         if not nodes and not edges:
-            st.info("Graph is empty. Add SQL or Manual flows to visualize.")
+            st.info("Graph is empty.")
         else:
-            # Visualization using Graphviz
             import graphviz
-            dot = graphviz.Digraph(comment='Data Lineage', graph_attr={'rankdir': 'LR', 'bgcolor': '#0e1117'})
+            dot = graphviz.Digraph(comment='Data Lineage', graph_attr={'rankdir': 'LR', 'bgcolor': '#0e1117', 'compound': 'true'})
             
+            # Group nodes by System (Clustering)
+            systems = {}
             for n in nodes:
-                # Style logic
-                color = "#E0E0E0" # default grey
-                fill = "#1e1e1e"
-                shape = "box"
-                style = "filled,rounded"
-                fontcolor = "white"
-                penwidth = "1"
+                sys = n["data"].get("system", "Uncategorized")
+                if sys not in systems: systems[sys] = []
+                systems[sys].append(n)
                 
-                # Type Styling
-                if n["type"] == "column": 
-                    shape = "ellipse"
-                    fill = "#2d2d2d"
-                elif n["type"] == "table":
-                    fill = "#004085" # dark blue
-                
-                # PII Styling
-                if n.get("pii_present"):
-                    fill = "#721c24" # dark red
-                    color = "#f5c6cb"
-                
-                # Impact Analysis Highlighting
-                if impact_node != "None":
-                    if n["id"] in impact_set:
-                        penwidth = "3"
-                        color = "#ffeb3b" # bright yellow border
-                    else:
-                        # Dim others
-                        fill = "#333333"
-                        fontcolor = "#777777"
-                
-                label = f"{n['label']}\n"
-                if n["type"] == "column" and n["data"].get("parent_table"):
-                     # minimalist label for columns?
-                     pass
-                if n.get("pii_present"):
-                    label += f"⚠️ {n['data'].get('pii_type')}"
-                
-                dot.node(n["id"], label, shape=shape, style=style, fillcolor=fill, color=color, fontcolor=fontcolor, penwidth=penwidth)
-            
+            for sys_name, sys_nodes in systems.items():
+                with dot.subgraph(name=f"cluster_{sys_name}") as c:
+                    c.attr(label=sys_name, style='dashed', color='#555555', fontcolor='#aaaaaa')
+                    
+                    for n in sys_nodes:
+                        # Styling
+                        color = "#444444"
+                        fill = "#1e1e1e"
+                        shape = "box"
+                        fontcolor = "white"
+                        penwidth = "1"
+                        
+                        if n["type"] == "column": 
+                            shape = "ellipse"; fill = "#252525"
+                        elif n["type"] in ["table", "file", "bucket"]:
+                            fill = "#0d47a1" # Blue for containers
+                            
+                        # PII
+                        if n.get("pii_present"):
+                            fill = "#b71c1c" # Red
+                            color = "#ffcdd2"
+                        
+                        # Highlighting
+                        if selected_node != "None":
+                            if n["id"] == selected_node:
+                                penwidth = "3"; color = "#00e676" # Green Origin
+                            elif n["id"] in downstream_set:
+                                penwidth = "2"; color = "#ffea00" # Yellow Impact
+                            elif n["id"] in upstream_set:
+                                penwidth = "2"; color = "#00b0ff" # Cyan Upstream
+                            else:
+                                fill = "#121212"; fontcolor = "#424242" # Dimmed
+                        
+                        label = f"{n['label']}"
+                        if n.get("pii_present"): label += f"\n⚠️{n['data'].get('pii_type')[:3]}"
+                        
+                        c.node(n["id"], label, shape=shape, style="filled,rounded", fillcolor=fill, color=color, fontcolor=fontcolor, penwidth=penwidth)
+
             for e in edges:
-                # Edge Styling
-                color = "#777777"
-                penwidth = "1"
-                
-                if impact_node != "None":
-                    if e["source"] in impact_set and e["target"] in impact_set:
-                         color = "#ffeb3b"
-                         penwidth = "2"
+                color = "#666666"
+                if selected_node != "None":
+                    if e["source"] in downstream_set and e["target"] in downstream_set:
+                        color = "#ffea00"
+                    elif e["source"] in upstream_set and e["target"] in upstream_set:
+                        color = "#00b0ff"
                     else:
-                         color = "#444444"
+                        color = "#222222"
                 
-                dot.edge(e["source"], e["target"], label=e["transformation"] or "", color=color, penwidth=penwidth)
+                dot.edge(e["source"], e["target"], label=e["transformation"] or "", color=color)
             
             st.graphviz_chart(dot, use_container_width=True)
             
