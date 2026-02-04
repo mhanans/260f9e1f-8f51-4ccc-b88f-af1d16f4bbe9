@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from api.routers import auth, scan, config
+from api.routers import auth, scan, config, audit
 from api.middleware import audit_logging_middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -16,6 +16,7 @@ app.add_middleware(BaseHTTPMiddleware, dispatch=audit_logging_middleware)
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(scan.router, prefix="/api/v1/scan", tags=["Scanning"])
 app.include_router(config.router, prefix="/api/v1/config", tags=["Configuration"])
+app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Logs"])
 
 @app.get("/")
 def read_root():

@@ -12,6 +12,7 @@ psycopg2-binary
 boto3
 presidio-analyzer
 presidio-anonymizer
+presidio-structured
 fastapi
 uvicorn
 python-multipart

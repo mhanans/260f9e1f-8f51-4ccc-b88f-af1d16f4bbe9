@@ -25,6 +25,8 @@ class ScanConfig(SQLModel, table=True):
     target_type: str # "database", "filesystem", "s3", "datalake"
     target_path: str 
     active: bool = Field(default=True)
+    tags: Optional[str] = None # JSON list of strings e.g. ["CONFIDENTIAL", "GDPR"]
+    last_scan_at: Optional[datetime] = None
     purpose_id: Optional[int] = Field(default=None, foreign_key="processingpurpose.id")
 
 class AuditLog(SQLModel, table=True):
@@ -47,4 +49,15 @@ class ScanResult(SQLModel, table=True):
     count: int
     confidence_score: float = Field(default=0.0)
     sample_data: Optional[str] = None 
+    location_metadata: Optional[str] = None # JSON string: {"page": 1, "row": 2, "sheet": "Sheet1"}
     is_encrypted: bool = Field(default=False) # Security check
+
+class ScanRule(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    rule_type: str # "regex", "deny_list", "keyword"
+    pattern: str # The regex string or keyword
+    score: float = Field(default=0.5)
+    entity_type: str # "CUSTOM_ID", "CONFIDENTIAL_HEADER"
+    is_active: bool = Field(default=True)
+    context_keywords: Optional[str] = None # JSON list of context words

@@ -1,4 +1,5 @@
 from typing import List, Dict, Any
+from datetime import datetime
 import logging
 import requests
 import psycopg2
@@ -52,7 +53,7 @@ class GenericDBConnector:
             logger.error(f"Metadata Crawl Error: {e}")
         return metadata
 
-    def scan_target(self, type: str, connection_string: str, table: str, limit: int = 50) -> List[Dict[str, Any]]:
+    def scan_target(self, type: str, connection_string: str, table: str, limit: int = 50, last_scan_time: datetime = None) -> List[Dict[str, Any]]:
         results = []
         try:
             if type == 'postgresql':
@@ -60,7 +61,18 @@ class GenericDBConnector:
                 cursor = conn.cursor()
                 cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table}' ORDER BY ordinal_position")
                 columns = [r[0] for r in cursor.fetchall()]
-                cursor.execute(f"SELECT * FROM \"{table}\" LIMIT {limit}")
+
+                # Delta Scan Logic (Naive implementation assuming 'updated_at' column exists if last_scan_time is provided)
+                if last_scan_time:
+                     # Check if updated_at exists
+                    if 'updated_at' in columns:
+                        cursor.execute(f"SELECT * FROM \"{table}\" WHERE updated_at > '{last_scan_time}' LIMIT {limit}")
+                    else:
+                        logger.warning(f"Delta scan requested for {table} but 'updated_at' column not found. Falling back to full scan.")
+                        cursor.execute(f"SELECT * FROM \"{table}\" LIMIT {limit}")
+                else:
+                    cursor.execute(f"SELECT * FROM \"{table}\" LIMIT {limit}")
+
                 rows = cursor.fetchall()
                 for row in rows:
                     for idx, cell in enumerate(row):
@@ -97,7 +109,7 @@ class GenericDBConnector:
             })
         return items
 
-    def scan_source(self, type: str, connection_string: str, query_or_params: str = None) -> List[Dict[str, Any]]:
+    def scan_source(self, type: str, connection_string: str, query_or_params: str = None, last_scan_time: datetime = None) -> List[Dict[str, Any]]:
         """
         Generic Scan source method.
         """

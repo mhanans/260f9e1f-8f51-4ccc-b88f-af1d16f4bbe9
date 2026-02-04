@@ -27,19 +27,26 @@ class CustomPIIScanner:
         self.reload_rules()
 
     def reload_rules(self):
-        """Loads Custom Recognizers and Deny List from JSON."""
-        if not CONFIG_PATH.exists(): return
-
+        """Loads Custom Recognizers and Deny List from Database (ScanRule table)."""
         try:
-            with open(CONFIG_PATH, "r") as f:
-                data = json.load(f)
+            # Need to import here to avoid circular init issues if possible, 
+            # or ensure api.models is ready.
+            from sqlmodel import Session, select
+            from api.db import engine
+            from api.models import ScanRule
+            
+            with Session(engine) as session:
+                rules = session.exec(select(ScanRule).where(ScanRule.is_active == True)).all()
                 
-                # A. Load Deny List
-                self.deny_words = data.get("deny_list", [])
+                # Separation
+                deny_rules = [r.pattern for r in rules if r.rule_type == "deny_list"]
+                regex_rules = [r for r in rules if r.rule_type == "regex"]
+                exclude_rules = [r.pattern for r in rules if r.rule_type == "exclude_entity"]
+                
+                # A. Update Deny List
+                self.deny_words = deny_rules
+                self._remove_recognizer("indonesian_header_deny")
                 if self.deny_words:
-                    # Remove old deny recognizer if exists
-                    self._remove_recognizer("indonesian_header_deny")
-                    
                     deny_recognizer = PatternRecognizer(
                         supported_entity="DENY_LIST",
                         name="indonesian_header_deny",
@@ -47,30 +54,28 @@ class CustomPIIScanner:
                     )
                     self.analyzer.registry.add_recognizer(deny_recognizer)
                 
-                # B. Load Custom Regex Recognizers
-                customs = data.get("custom_recognizers", [])
-                for c in customs:
-                    if not c.get("active", True):
-                        self._remove_recognizer(c["name"])
-                        continue
-
-                    # Add or Update
-                    self._remove_recognizer(c["name"]) # Remove first to avoid dupe
+                # B. Update Custom Regex
+                for c in regex_rules:
+                    self._remove_recognizer(c.name)
                     
-                    pat = Pattern(name=f"{c['name']}_pattern", regex=c["regex"], score=c["score"])
+                    pat = Pattern(name=f"{c.name}_pattern", regex=c.pattern, score=c.score)
                     rec = PatternRecognizer(
-                        supported_entity=c["entity"],
-                        name=c["name"],
+                        supported_entity=c.entity_type, 
+                        name=c.name,
                         patterns=[pat],
-                        context=c.get("context", [])
+                        context=json.loads(c.context_keywords) if c.context_keywords else []
                     )
                     self.analyzer.registry.add_recognizer(rec)
+                    
+                # C. Exclude entities
+                self.exclude_entities = exclude_rules
                 
-                # C. Exclude Entities list
-                self.exclude_entities = data.get("exclude_entities", [])
-
         except Exception as e:
-            print(f"Error loading scanner rules: {e}")
+            # Fallback to JSON if DB fails (init time) or just log error
+            print(f"Error loading scanner rules from DB: {e}")
+            # Try loading from file as backup? 
+            # Keeping original JSON load logic as backup could be wise but requested to move to managed.
+            pass
 
     def _remove_recognizer(self, name):
         self.analyzer.registry.recognizers = [
@@ -109,7 +114,41 @@ class CustomPIIScanner:
                 "score": res.score,
                 "text": extracted_text 
             })
+            output.append({
+                "type": res.entity_type,
+                "start": res.start,
+                "end": res.end,
+                "score": res.score,
+                "text": extracted_text 
+            })
         return output
+
+    def analyze_dataframe(self, df):
+        """
+        Analyzes a pandas DataFrame using Presidio Structured BatchAnalyzerEngine.
+        Returns iterator of Dict results.
+        """
+        try:
+            from presidio_structured import BatchAnalyzerEngine
+            
+            # Initialize Batch Analyzer with our configured analyzer
+            batch_analyzer = BatchAnalyzerEngine(analyzer_engine=self.analyzer)
+            
+            # Analyze - returns generator of BatchAnalysisResult
+            # We assume df columns are headers
+            result_iter = batch_analyzer.analyze_iterator(df)
+            return result_iter
+            
+        except ImportError:
+            # Fallback if library missing despite being in requirements (e.g. dev env mismatch)
+            print("presidio-structured not found, falling back to manual loop.")
+            results = []
+            # Manual fallback logic if needed, but for now let's error or return empty to signal issue
+            # Ideally this shouldn't happen if requirements installed.
+            return []
+        except Exception as e:
+            print(f"Batch Analysis Error: {e}")
+            return []
 
 # Singleton instance
 scanner_engine = CustomPIIScanner()

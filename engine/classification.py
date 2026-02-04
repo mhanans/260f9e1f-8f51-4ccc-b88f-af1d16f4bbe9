@@ -18,20 +18,52 @@ class ClassificationEngine:
         ]
 
     def load_config(self):
-        """Reloads mapping and denied headers from Config JSON."""
-        # Defaults
+        """Reloads mapping and denied headers from Database specific ScanRules."""
         self.sensitivity_map = {}
         self.header_blacklist = []
+        # context_rules defaults are hardcoded but we will try to append/override from DB
         
-        if CONFIG_PATH.exists():
-            try:
-                with open(CONFIG_PATH, "r") as f:
-                    data = json.load(f)
-                    self.sensitivity_map = data.get("sensitivity_map", {})
-                    # Add deny_list lowercased for checking
-                    self.header_blacklist = [x.lower() for x in data.get("deny_list", [])]
-            except Exception as e:
-                print(f"Error loading classification config: {e}")
+        try:
+            from sqlmodel import Session, select
+            from api.db import engine
+            from api.models import ScanRule
+            
+            with Session(engine) as session:
+                rules = session.exec(select(ScanRule).where(ScanRule.is_active == True)).all()
+                
+                # 1. Deny List (Header Blacklist)
+                self.header_blacklist = [r.pattern.lower() for r in rules if r.rule_type == "deny_list"]
+                
+                # 2. Context Rules (Document Classification)
+                # We expect rules with type "classification"
+                # Name = Category (e.g. Financial), Pattern = Keyword (e.g. gaji) or Pattern = list of keywords stringified
+                
+                db_context_rules = {}
+                for r in rules:
+                    if r.rule_type == "classification":
+                        cat = r.name
+                        if cat not in db_context_rules:
+                            db_context_rules[cat] = set()
+                        # If pattern contain commas, split
+                        keywords = [k.strip() for k in r.pattern.split(',') if k.strip()]
+                        for k in keywords:
+                            db_context_rules[cat].add(k)
+                
+                # Merge with default or replace? Let's append for now to ensure base functionality.
+                for rule in self.context_rules:
+                    cat = rule["category"]
+                    if cat in db_context_rules:
+                        rule["keywords"].extend(list(db_context_rules[cat]))
+                        del db_context_rules[cat]
+                
+                # Add remaining new categories
+                for cat, keywords in db_context_rules.items():
+                    self.context_rules.append({"category": cat, "keywords": list(keywords)})
+
+        except Exception as e:
+            print(f"Error loading classification rules from DB: {e}")
+            # Ensure at least defaults are there (set in init)
+            pass
 
     def classify_sensitivity(self, pii_type: str) -> str:
         """Returns Sensitivity Category based on UU PDP."""
