@@ -369,8 +369,19 @@ def main():
             if st.button("🚀 Sync All Sources & Build Catalog"):
                 with st.spinner("Crawling all active connections..."):
                     all_conns = st.session_state.get("data_connections", [])
+                    
+                    # 1. Build from Active Connections (DB, S3)
                     lineage_engine.build_global_catalog(all_connections=all_conns)
-                    st.success(f"Global Catalog built with {len(lineage_engine.nodes)} nodes!")
+                    
+                    # 2. Ingest Historical File Scans (CSV)
+                    with st.spinner("Ingesting historical scan results..."):
+                        lineage_engine.inject_scan_results("data.csv")
+                    
+                    # 3. Propagate PII Tags downstream
+                    with st.spinner("Propagating compliance tags..."):
+                        lineage_engine.propagate_pii_labels()
+                    
+                    st.success(f"Global Catalog built with {len(lineage_engine.nodes)} nodes! (Injected {len([n for n in lineage_engine.nodes if 'file' in n])} file nodes)")
                     st.rerun()
             
             st.divider()

@@ -80,7 +80,6 @@ class LineageEngine:
         """Main function for OneTrust-style Global Metadata Discovery"""
         logger.info("Starting Global Metadata Discovery")
         
-        # Reset graph for full rebuild (or optionally keep)
         self.nodes = {}
         self.edges = [] 
         
@@ -92,21 +91,27 @@ class LineageEngine:
             try:
                 # 1. Database Metadata Crawling
                 if "Database" in conn_type and db_connector:
-                    # Determine type, default 'postgresql'
-                    db_sys_type = 'postgresql'
+                    db_sys_type = 'postgresql' # Default for now
                     metadata = db_connector.get_schema_metadata(db_sys_type, conn_details)
                     
                     for table_info in metadata:
                         t_name = table_info["table"]
                         cols = table_info["columns"]
-                        # Add Table Node
+                        
                         t_id = self._add_node(t_name, "table", {
                             "system": conn_name, 
                             "row_count": table_info["row_count"],
-                            "conn_type": conn_type
+                            "conn_type": conn_type,
+                            "data_subject_type": self._guess_subject_type(t_name)
                         })
                         
-                        # Add Column Nodes
+                        # Fetch Sample Data for PII Validation (Real Data-Driven)
+                        # We try to get a small sample for the whole table to minimize queries
+                        table_sample = []
+                        if db_connector:
+                             table_sample = db_connector.scan_target(db_sys_type, conn_details, t_name, limit=10)
+                        
+                        # Process Columns
                         for col in cols:
                             c_id = self._add_node(col, "column", {
                                 "system": conn_name, 
@@ -114,27 +119,66 @@ class LineageEngine:
                             })
                             self._add_edge(t_id, c_id, "contains")
                             
-                            # Integrate PII Check?
-                            # For full catalog, we can check basic regex or name heuristic if deep scan is too slow
-                            # Or do a lightweight scan. Let's do Name Heuristic + Optional Lightweight Sample if desired
-                            # For now: Name Heuristic to emulate "Smart" categorization at scale
-                            pii_type = self._name_heuristic(col)
-                            if pii_type:
-                                self.nodes[c_id]["pii_present"] = True
-                                self.nodes[c_id]["data"]["pii_type"] = pii_type
+                            # Real PII Detection
+                            self._detect_pii_real(c_id, col, table_sample)
 
                 # 2. S3/Storage Metadata
                 elif "S3" in conn_type:
+                    # Create Bucket Node
                     s3_id = self._add_node(conn_name, "bucket", {"system": conn_name, "conn_type": conn_type})
-                    # Add dummy files if list available
-                    pass
+                    # Note: Files within S3 will be populated via inject_scan_results if scanned
 
             except Exception as e:
                 logger.error(f"Error scanning connection {conn_name}: {e}")
 
-        # 2. Smart Reconciler
+        # 3. Smart Reconciler
         self._reconcile_cross_system_flows()
         
+    def _guess_subject_type(self, table_name: str) -> str:
+        t = table_name.lower()
+        if "user" in t or "cust" in t: return "Customer"
+        if "emp" in t: return "Employee"
+        return "General"
+
+    def _detect_pii_real(self, node_id: str, col_name: str, sample_data: List[Dict]):
+        """
+        Uses Presidio Scanner on actual sample data to determine PII.
+        """
+        # Filter sample for this column
+        values = [row.get("value") for row in sample_data if row.get("field") == col_name and row.get("value")]
+        if not values: return
+
+        joined_text = " ".join(values[:5]) # Context window
+        
+        pii_type = None
+        if scanner_engine:
+            findings = scanner_engine.analyze_text(joined_text)
+            if findings:
+                # Get most frequent type
+                types = [f["type"] for f in findings]
+                if types:
+                    pii_type = Counter(types).most_common(1)[0][0]
+        
+        # Fallback to name heuristic for obvious fields if scanner misses (optional, generic safety)
+        if not pii_type:
+             pii_type = self._name_heuristic(col_name)
+
+        if pii_type:
+            self._enrich_pii_node(node_id, pii_type)
+
+    def _enrich_pii_node(self, node_id: str, pii_type: str):
+        self.nodes[node_id]["pii_present"] = True
+        self.nodes[node_id]["data"]["pii_type"] = pii_type
+        
+        # Risk & Compliance
+        risk = "Low"
+        if pii_type in ["EMAIL_ADDRESS", "PHONE_NUMBER", "IP_ADDRESS"]: risk = "Medium"
+        if pii_type in ["ID_NIK", "CREDIT_CARD", "IBAN_CODE"]: risk = "High"
+        
+        self.nodes[node_id]["data"]["risk_level"] = risk
+        self.nodes[node_id]["tags"].append("PII")
+        if risk == "High": self.nodes[node_id]["tags"].append("Sensitive")
+
     def _name_heuristic(self, col_name):
         lower = col_name.lower()
         if "email" in lower: return "EMAIL_ADDRESS"
@@ -144,23 +188,29 @@ class LineageEngine:
 
     def _reconcile_cross_system_flows(self):
         """
-        Smart Linker: heuristic matching of similar columns across unrelated systems.
+        Smart Linker with Blacklist to prevent Spaghetti Graph.
         """
-        # Find all column nodes
-        columns = [n for n in self.nodes.values() if n["type"] == "column"]
+        blacklist = ["id", "uuid", "created_at", "updated_at", "status", "is_active", "type", "category"]
         
-        # Group by (label, pii_type) tuple as key
+        columns = [n for n in self.nodes.values() if n["type"] == "column"]
         grouped = {}
+        
         for col in columns:
             label = col["label"].lower()
+            if label in blacklist: continue # Skip generic IDs
+            
             p_type = col["data"].get("pii_type")
+            # Only exact match names, but ideally we match (Name + PII Type) for stronger confidence
             key = (label, p_type)
             if key not in grouped: grouped[key] = []
             grouped[key].append(col)
             
         for key, group in grouped.items():
             if len(group) > 1:
-                # Potential match
+                label, p_type = key
+                # Strict: Only link if PII is present OR name is very specific (len > 3)
+                if not p_type and len(label) < 4: continue
+                
                 for i in range(len(group)):
                     for j in range(i+1, len(group)):
                         node_a = group[i]
@@ -168,9 +218,63 @@ class LineageEngine:
                         sys_a = node_a["data"].get("system")
                         sys_b = node_b["data"].get("system")
                         
-                        # Link if different systems
                         if sys_a and sys_b and sys_a != sys_b:
-                            self._add_edge(node_a["id"], node_b["id"], "probable_flow", "Smart Match (Heuristic)")
+                            self._add_edge(node_a["id"], node_b["id"], "probable_flow", "Smart Match")
+
+    def inject_scan_results(self, csv_path: str = "data.csv"):
+        """
+        Ingests historical File Scan results (e.g. from local/S3 exports) into the graph.
+        """
+        import pandas as pd
+        import os
+        
+        if not os.path.exists(csv_path):
+            logger.warning(f"Scan history {csv_path} not found.")
+            return
+
+        try:
+            df = pd.read_csv(csv_path)
+            # Expected cols: file, pii_type, confidence, etc.
+            # We assume 'file' column contains the file name/path
+            
+            for _, row in df.iterrows():
+                file_name = row.get("file", row.get("filename", "unknown_file"))
+                pii_type = row.get("pii_type", row.get("type", None))
+                
+                # File Node (Represented as a dataset/table in generic system 'FileStorage')
+                # Try to map to existing S3 bucket if path matches, else generic 'Local/Export'
+                system = "FileStorage"
+                if "minio" in file_name or "s3" in str(file_name): system = "S3_Storage"
+                
+                f_id = self._add_node(file_name, "file", {"system": system})
+                
+                if pii_type:
+                    # In files, the File itself is the container of PII. 
+                    # Optionally create a 'column' node if we had specific location info, 
+                    # but usually files are treated as atomic datasets.
+                    self._enrich_pii_node(f_id, pii_type)
+                    
+        except Exception as e:
+            logger.error(f"Error injecting CSV scans: {e}")
+
+    def propagate_pii_labels(self):
+        """
+        Propagates PII attributes downstream.
+        Iterative approach to handle chains.
+        """
+        changed = True
+        while changed:
+            changed = False
+            for edge in self.edges:
+                src = self.nodes.get(edge["source"])
+                tgt = self.nodes.get(edge["target"])
+                
+                if src and tgt and src.get("pii_present") and not tgt.get("pii_present"):
+                    # Propagate
+                    pii_t = src["data"].get("pii_type")
+                    self._enrich_pii_node(tgt["id"], pii_t)
+                    tgt["tags"].append("Propagated")
+                    changed = True
 
     # UI Helpers
     def get_impact_path(self, start_node_id: str) -> Set[str]:
