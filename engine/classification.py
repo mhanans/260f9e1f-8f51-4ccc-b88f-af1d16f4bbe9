@@ -7,8 +7,6 @@ CONFIG_PATH = Path("config/scanner_rules.json")
 
 class ClassificationEngine:
     def __init__(self):
-        self.load_config()
-
         # 2. Context Rules (Automated Labeling) - kept hardcoded for now or can move to config too
         self.context_rules = [
             {"category": "Financial", "keywords": ["gaji", "salary", "rekening", "bank", "transfer", "rupiah", "rp", "keuangan", "pajak"]},
@@ -16,6 +14,8 @@ class ClassificationEngine:
             {"category": "HR", "keywords": ["karyawan", "pegawai", "cuti", "absensi", "kontrak", "rekrutmen", "hrd"]},
             {"category": "Legal", "keywords": ["perjanjian", "hukum", "pidana", "perdata", "pasal", "uu", "regulasi"]}
         ]
+        
+        self.load_config()
 
     def load_config(self):
         """Reloads mapping and denied headers from Database specific ScanRules."""

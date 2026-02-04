@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+# Add parent directory to path to allow imports from root
+sys.path.append(str(Path(__file__).parent.parent.absolute()))
+
 import streamlit as st
 import requests
 import pandas as pd
@@ -7,13 +12,8 @@ import json
 import re
 import structlog
 import time
-from pathlib import Path
 from datetime import datetime
-from docx import Document 
-import sys
-
-# Add parent directory to path to allow imports from root
-sys.path.append(str(Path(__file__).parent.parent.absolute()))
+from docx import Document
 
 # --- Internal Engines & Connectors ---
 from engine.classification import classification_engine
