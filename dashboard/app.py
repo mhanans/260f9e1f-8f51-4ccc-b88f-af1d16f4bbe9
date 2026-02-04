@@ -351,7 +351,7 @@ def main():
         
         from lineage.graph import lineage_engine
         
-        tab1, tab2, tab3 = st.tabs(["🧩 SQL Parser (Simulation)", "🤖 Automated Scan (DB + Logs)", "✍️ Manual Builder"])
+        tab1, tab2, tab3 = st.tabs(["🧩 SQL Parser (Simulation)", "🌐 Global Metadata Sync", "✍️ Manual Builder"])
         
         with tab1:
             st.subheader("Extract Lineage from SQL (Simulation Mode)")
@@ -363,29 +363,21 @@ def main():
                     st.success("Parsed successfully!")
         
         with tab2:
-            st.subheader("Data-Driven Lineage (Real Metadata + PII Scan)")
-            st.caption("Connects to actual DB to fetch schema, scan for PII, and map lineage from logs.")
+            st.subheader("🌐 Global Metadata Sync")
+            st.caption("Scan ALL active connections to build a unified Cross-System Catalog.")
             
-            db_conns = [c for c in st.session_state["data_connections"] if "Database" in c["type"]]
-            if not db_conns:
-                st.warning("No Database Connections found. Add one in 'Connections' page.")
-            else:
-                sel_conn_name = st.selectbox("Select Database Source", [c["name"] for c in db_conns])
-                sel_conn = next(c for c in db_conns if c["name"] == sel_conn_name)
-                
-                sql_logs = st.text_area("Paste SQL Audit Logs (Optional)", height=100, placeholder="INSERT INTO target SELECT * FROM source; ...")
-                
-                if st.button("🚀 Build Rich Lineage"):
-                    with st.spinner("Fetching Metadata & Scanning PII..."):
-                        # Extract Logs list
-                        logs_list = [l.strip() for l in sql_logs.split(';') if l.strip()]
-                        
-                        lineage_engine.build_automated_lineage(
-                            connection_string=sel_conn["details"],
-                            db_type='postgresql', # Defaulting to PG per current support
-                            sql_logs=logs_list
-                        )
-                        st.success("Lineage Graph built from actual Metadata & PII Scans!")
+            if st.button("🚀 Sync All Sources & Build Catalog"):
+                with st.spinner("Crawling all active connections..."):
+                    all_conns = st.session_state.get("data_connections", [])
+                    lineage_engine.build_global_catalog(all_connections=all_conns)
+                    st.success(f"Global Catalog built with {len(lineage_engine.nodes)} nodes!")
+                    st.rerun()
+            
+            st.divider()
+            search_query = st.text_input("🔍 Search Catalog (Table or Column Name)", "") 
+            if search_query:
+                # We can filter visual graph below based on this query but for now just basic text
+                st.caption(f"Filtering graph for: {search_query} (Not fully implemented in viz yet)")
 
         with tab3:
             st.subheader("Manual Flow Injection")
@@ -401,36 +393,90 @@ def main():
         st.divider()
         st.subheader("🕸️ Lineage Graph")
         
+        # --- Visualization Controls ---
+        c1, c2 = st.columns([1, 2])
+        show_cols = c1.toggle("Show Column Level Lineage", value=True)
+        
         graph_data = lineage_engine.get_graph()
         nodes = graph_data["nodes"]
         edges = graph_data["edges"]
         
+        # Filter for Column Toggle
+        if not show_cols:
+            nodes = [n for n in nodes if n["type"] != "column"]
+            edges = [e for e in edges if "column" not in e["source"] and "column" not in e["target"]]
+            
+        # Impact Analysis Selector
+        pii_nodes = [n["id"] for n in nodes if n.get("pii_present")]
+        impact_node = c2.selectbox("🔍 Impact Analysis (Select PII Node)", ["None"] + pii_nodes)
+        
+        impact_set = set()
+        if impact_node != "None":
+            impact_set = lineage_engine.get_impact_path(impact_node)
+            st.caption(f"📉 Impact flows to {len(impact_set)-1} downstream nodes.")
+
         if not nodes and not edges:
             st.info("Graph is empty. Add SQL or Manual flows to visualize.")
         else:
-            # Simple Visualization using Graphviz
+            # Visualization using Graphviz
             import graphviz
             dot = graphviz.Digraph(comment='Data Lineage', graph_attr={'rankdir': 'LR', 'bgcolor': '#0e1117'})
             
             for n in nodes:
-                # Style based on type
-                color = "lightblue"
+                # Style logic
+                color = "#E0E0E0" # default grey
+                fill = "#1e1e1e"
                 shape = "box"
+                style = "filled,rounded"
+                fontcolor = "white"
+                penwidth = "1"
+                
+                # Type Styling
                 if n["type"] == "column": 
-                    color = "navajowhite"
                     shape = "ellipse"
+                    fill = "#2d2d2d"
+                elif n["type"] == "table":
+                    fill = "#004085" # dark blue
                 
-                label = f"{n['label']}\n({n['type']})"
+                # PII Styling
                 if n.get("pii_present"):
-                    label += f"\n⚠️ {n['data'].get('pii_type')}"
-                    color = "salmon"
+                    fill = "#721c24" # dark red
+                    color = "#f5c6cb"
                 
-                dot.node(n["id"], label, shape=shape, style="filled", fillcolor=color)
+                # Impact Analysis Highlighting
+                if impact_node != "None":
+                    if n["id"] in impact_set:
+                        penwidth = "3"
+                        color = "#ffeb3b" # bright yellow border
+                    else:
+                        # Dim others
+                        fill = "#333333"
+                        fontcolor = "#777777"
+                
+                label = f"{n['label']}\n"
+                if n["type"] == "column" and n["data"].get("parent_table"):
+                     # minimalist label for columns?
+                     pass
+                if n.get("pii_present"):
+                    label += f"⚠️ {n['data'].get('pii_type')}"
+                
+                dot.node(n["id"], label, shape=shape, style=style, fillcolor=fill, color=color, fontcolor=fontcolor, penwidth=penwidth)
             
             for e in edges:
-                dot.edge(e["source"], e["target"], label=e["transformation"] or e["label"])
+                # Edge Styling
+                color = "#777777"
+                penwidth = "1"
+                
+                if impact_node != "None":
+                    if e["source"] in impact_set and e["target"] in impact_set:
+                         color = "#ffeb3b"
+                         penwidth = "2"
+                    else:
+                         color = "#444444"
+                
+                dot.edge(e["source"], e["target"], label=e["transformation"] or "", color=color, penwidth=penwidth)
             
-            st.graphviz_chart(dot)
+            st.graphviz_chart(dot, use_container_width=True)
             
             with st.expander("Show Raw JSON"):
                 st.json(graph_data)
