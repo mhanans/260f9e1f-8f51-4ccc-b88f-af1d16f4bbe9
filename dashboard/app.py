@@ -144,7 +144,7 @@ def main():
     if "token" not in st.session_state: login(); return
 
     st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Go to", ["📂 Data Explorer", "🗂️ Connections", "🚀 Scan Manager", "🔗 Data Lineage", "⚙️ Rules Engine", "✅ Compliance Registry", "📊 Dashboard", "📜 Audit Logs"])
+    page = st.sidebar.radio("Go to", ["📂 Data Explorer", "🗂️ Connections", "🚀 Scan Manager", "🔗 Data Lineage", "⚙️ Rules Engine", "✅ Data Catalogue", "📊 Dashboard", "📜 Audit Logs"])
     headers = {"Authorization": f"Bearer {st.session_state['token']}"}
 
     # ... Pages: Explorer, Connections (Same) ...
@@ -252,8 +252,8 @@ def main():
                  save_connections(st.session_state["data_connections"])
                  st.rerun()
 
-    elif page == "✅ Compliance Registry":
-        st.title("✅ Compliance Registry")
+    elif page == "✅ Data Catalogue":
+        st.title("✅ Data Catalogue")
         st.caption("Master list of confirmed Personal Data assets (ROPA basis).")
         
         # Load Saved Data
@@ -517,7 +517,7 @@ def main():
                                 except Exception as e:
                                     logger.error(f"Failed to save row {idx}: {e}")
                     
-                    st.success(f"Successfully registered {saved_count} compliance assets! Check 'Compliance Registry'.")
+                    st.success(f"Successfully registered {saved_count} compliance assets! Check 'Data Catalogue'.")
 
 
 
