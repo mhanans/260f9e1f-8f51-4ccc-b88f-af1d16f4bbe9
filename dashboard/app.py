@@ -292,6 +292,7 @@ def main():
                     "source": st.column_config.TextColumn("Source", disabled=True),
                     "location": st.column_config.TextColumn("Location", disabled=True),
                     "pii_type": st.column_config.TextColumn("Type", disabled=True),
+                    "sample_data": st.column_config.TextColumn("Data Sample", disabled=True, width="medium"), # Added Column
                     "confidence_score": st.column_config.NumberColumn("Conf.", format="%.2f", disabled=True),
                     "status": st.column_config.SelectboxColumn("Status", options=["Active", "False Positive", "Resolved", "Archived"]),
                     "purpose": st.column_config.SelectboxColumn("Purpose", options=["Recruitment", "Payroll", "Marketing", "Legal", "Operational", "Other"]),
@@ -501,10 +502,16 @@ def main():
                     with st.spinner("Registering assets..."):
                         for idx, row in edited_df.iterrows():
                             if row["Save"]:
+                                # Logic to save Person Name without DB Schema Change
+                                # We append it to the 'location' field
+                                loc_val = row["Table/File Location"]
+                                if row["Type"] == "PERSON":
+                                    loc_val = f"{loc_val} | Ref: {row['Data']}"
+
                                 # Construct Payload matching DetectedData model
                                 payload = {
                                     "source": row["Source"],
-                                    "location": row["Table/File Location"],
+                                    "location": loc_val,
                                     "pii_type": row["Type"],
                                     "sensitivity": row["Category"],
                                     "purpose": row["Purpose"] if row["Purpose"] else "Unassigned",

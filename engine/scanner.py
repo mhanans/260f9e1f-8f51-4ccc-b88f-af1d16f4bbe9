@@ -81,6 +81,18 @@ class CustomPIIScanner:
                     self.analyzer.registry.add_recognizer(deny_recognizer)
                 
                 # B. Update Custom Regex
+                print(f"DEBUG: Loading {len(regex_rules)} regex rules from DB...")
+                
+                legacy_map = {
+                    "PHONE_NUMBER": "ID_PHONE_NUMBER",
+                    "FIN_BANK_ACCT_ID": "ID_BANK_ACCOUNT", 
+                    "FIN_AMT": "ID_FINANCE_AMOUNT",
+                    "ORGANIZATION": "ID_ORGANIZATION",
+                    "SOCIAL_MEDIA": "ID_SOCIAL_MEDIA", 
+                    "PROJECT_NAME": "ID_PROJECT_NAME",
+                    "EMAIL_ADDRESS": "ID_EMAIL"
+                }
+
                 for c in regex_rules:
                     self._remove_recognizer(c.name)
                     
@@ -89,15 +101,20 @@ class CustomPIIScanner:
                     except:
                         context_list = []
 
+                    # Enforce ID_ prefix for known types (Legacy DB Fix)
+                    e_type = legacy_map.get(c.entity_type, c.entity_type)
+
                     pat = Pattern(name=f"{c.name}_pattern", regex=c.pattern, score=c.score)
                     rec = PatternRecognizer(
-                        supported_entity=c.entity_type, 
+                        supported_entity=e_type, 
                         name=c.name,
                         patterns=[pat],
                         context=context_list,
                         supported_language=None # Apply to ALL languages (EN, ID, etc.)
                     )
                     self.analyzer.registry.add_recognizer(rec)
+                
+                print(f"DEBUG: Successfully registered {len(regex_rules)} custom recognizers.")
                     
                 # C. Exclude entities
                 self.exclude_entities = exclude_rules
