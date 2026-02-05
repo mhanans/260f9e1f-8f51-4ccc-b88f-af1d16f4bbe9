@@ -224,11 +224,31 @@ class CustomPIIScanner:
                     if any(char.isdigit() for char in extracted_text): continue
                     if len(extracted_text) < 3: continue
                     if len(extracted_words) > 5: continue # Names rarely > 5 words
-                
-            # 2. Skip common False Positives for DATE_TIME that look like coordinates or just numbers
+
+            # 2. Skip common False Positives for DATE_TIME containing file artifacts or weird text
             if res.entity_type == "DATE_TIME":
                 if re.match(r"^-?\d{1,3}\.\d+$", extracted_text): continue
                 if extracted_text.isdigit(): continue # Just a year or number is rarely PII alone
+                if any(x in extracted_text.lower() for x in [".pdf", ".csv", "health", "storybook", "version"]): continue
+
+            # 3. Filter PHONE_NUMBER Noise (e.g. coordinates like 0.8123 or short numeric strings)
+            if res.entity_type == "PHONE_NUMBER":
+                # Reject floats (e.g. 0.8269353) which are likely confidence scores from raw text
+                if re.match(r"^\d+\.\d+$", extracted_text): continue
+                # Reject if too short (e.g. < 7 digits)
+                digits = re.sub(r"\D", "", extracted_text)
+                if len(digits) < 7: continue
+
+            # 4. Filter US_PASSPORT false positives (random 9 digit numbers)
+            if res.entity_type == "US_PASSPORT":
+                # Passports are strictly 9 chars usually. 
+                # If found in a float context (e.g. 0.222222222), it's noise.
+                if "." in extracted_text: continue
+            
+            # 5. Filter NRP (Custom) false positives
+            if res.entity_type == "NRP":
+                 if len(extracted_text) < 4: continue
+                 if extracted_text.lower() in ["astra", "islam", "hindu", "buddha", "kristen"]: continue # Religion/Company noise
 
             output.append({
                 "type": res.entity_type,
