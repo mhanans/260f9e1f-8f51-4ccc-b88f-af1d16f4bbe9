@@ -21,6 +21,11 @@ class CustomPIIScanner:
         self.deny_words = []
         self.exclude_entities = []
         
+        # Dynamic Smart Filter Sets (Empty by default)
+        self.common_id_false_positives = set()
+        self.person_negative_contexts = set()
+        self.person_invalid_particles = set()
+        
         # Load Dynamic Rules (DB Only as Source of Truth)
         # Seeding is handled by main.py on startup
         self.reload_rules()
@@ -37,10 +42,32 @@ class CustomPIIScanner:
                 if not rules:
                     return 
 
-                # Separation
-                deny_rules = [r.pattern for r in rules if r.rule_type == "deny_list"]
-                regex_rules = [r for r in rules if r.rule_type == "regex"]
-                exclude_rules = [r.pattern for r in rules if r.rule_type == "exclude_entity"]
+                # Initialize containers
+                deny_rules = []
+                regex_rules = []
+                exclude_rules = []
+                
+                # Dynamic Smart Filter Sets
+                self.common_id_false_positives = set()
+                self.person_negative_contexts = set()
+                self.person_invalid_particles = set() # Renamed to standard snake_case
+
+                for r in rules:
+                    if r.rule_type == "deny_list":
+                        deny_rules.append(r.pattern)
+                    elif r.rule_type == "regex":
+                        regex_rules.append(r)
+                    elif r.rule_type == "exclude_entity":
+                        exclude_rules.append(r.pattern)
+                    
+                    # New Types
+                    elif r.rule_type == "false_positive_person":
+                        self.common_id_false_positives.add(r.pattern.lower())
+                    elif r.rule_type == "negative_context_person":
+                        self.person_negative_contexts.add(r.pattern.lower())
+                    elif r.rule_type == "invalid_particle_person":
+                        self.person_invalid_particles.add(r.pattern.lower())
+                    
                 
                 # A. Update Deny List
                 self.deny_words = deny_rules
@@ -91,58 +118,9 @@ class CustomPIIScanner:
             text: Text to analyze.
             context: List of context words (e.g. ['phone', 'mobile', 'filename.pdf']) to boost detection.
         """
-        # Common Indonesian words often detected as PERSON by Spacy (False Positives)
-        COMMON_ID_FALSE_POSITIVES = {
-            # Administrative / Address
-            "jalan", "jl", "jl.", "gang", "gg", "rt", "rw", "no", "nomor", 
-            "kecamatan", "kelurahan", "kabupaten", "kota", "provinsi", 
-            "blok", "lantai", "gedung", "menara", "kode", "pos", "komplek",
-            
-            # Business / Corporate
-            "pt", "cv", "persero", "tbk", "ud", "bank", "kcp", "kc", "unit", 
-            "kantor", "cabang", "pusat", "divisi", "bagian", "departemen",
-            "direktur", "manager", "staf", "admin", "hrd", "pic", "cs",
-            "pembayaran", "transaksi", "saldo", "total", "rupiah", "transfer",
-            "rekening", "biaya", "tagihan", "faktur", "invoice", "kwitansi",
-            "po", "pr", "order", "qty", "amount", "harga", "diskon",
-            
-            # Time / Calendar
-            "tanggal", "bulan", "tahun", "jam", "pukul", "waktu", "hari",
-            "senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu",
-            "januari", "februari", "maret", "april", "mei", "juni", 
-            "juli", "agustus", "september", "oktober", "november", "desember",
-            
-            # Correspondence / Formal
-            "hormat", "kami", "kita", "saya", "anda", "beliau", "mereka",
-            "ketua", "sekretaris", "bendahara", "anggota", "pimpinan",
-            "kepada", "yth", "dari", "hal", "lampiran", "perihal", "tembusan",
-            "catatan", "keterangan", "status", "aktif", "nonaktif", "valid",
-            "bapak", "ibu", "sdr", "sdri", "saudara", "pemohon", "penerima",
-            
-            # Generic Terms / Labels often mistaken for Names
-            "jenis", "kelamin", "laki-laki", "perempuan", "pria", "wanita", # Gender
-            "tempat", "lahir", "tanggal", "waktu", # Place/Time
-            "nrp", "nik", "nis", "nip", "ktp", "sim", "npwp", # ID Names
-            "nomor", "no", "kartu", "keluarga", "kk" # Doc Names
-        }
+        # Note: We rely on self.common_id_false_positives, self.person_negative_contexts, etc loaded from DB.
         
-        # Context that INVALIDATES a Person match (e.g. "Jalan Sudirman" -> Sudirman is not a person here)
-        PERSON_NEGATIVE_CONTEXTS = {
-            "jalan", "jl", "jl.", "loc", "lokasi", "alamat", "address", # Address indicators
-            "bank", "rekening", "atm", "bca", "bri", "mandiri", "bni", # Finance
-            "pt", "cv", "perusahaan", "company", # Org
-            "kabupaten", "kota", "provinsi", "kec.", "kel.", # Administrative
-            "status", "keterangan", "note", "desc", "perihal", "hal", # Random headers
-            "tanggal", "date", "hari", # Time headers
-            
-            # --- NEW ADDITIONS BASED ON FEEDBACK ---
-            "jenis", "kelamin", # "Jenis Kelamin" header often followed by "Laki-laki" which might be detected as name
-            "tempat", "lahir", # "Tempat Lahir" header
-            "nrp", "nis", "nip", "nik", # ID Headers
-            "nomor", "ktp", "kk", "npwp", "kartu", "keluarga" # Document Headers
-        }
-
-        # Context that VALIDATES a Person match (Strong indicators)
+        # Hardcoded Positive Contexts (Safe to keep in code as they represent core language logic, rarely changed)
         PERSON_POSITIVE_CONTEXTS = {
             "nama", "name", "customer", "karyawan", "pegawai", "staff",
             "pic", "penanggung", "jawab", "oleh", "by",
@@ -175,8 +153,6 @@ class CustomPIIScanner:
 
             # --- SMART FILTERING ---
             
-            # --- SMART FILTERING ---
-            
             # 1. Filter PERSON False Positives
             if res.entity_type == "PERSON":
                 # Rule A: Capitalization Check
@@ -189,21 +165,17 @@ class CustomPIIScanner:
                 # Rule B: Invalid Particle Check
                 # If these words appear INSIDE the detected name, it is definitely NOT a name.
                 # e.g. "dan tidak", "yang perlu", "ke dalam"
-                INVALID_NAME_PARTICLES = {
-                    "dan", "yang", "atau", "untuk", "adalah", "ini", "itu", "dengan",
-                    "di", "ke", "dari", "pada", "tersebut", "bisa", "akan", "telah",
-                    "sebagai", "jika", "maka", "tidak", "belum", "sudah", "lagi",
-                    "oleh", "tentang", "seperti", "yaitu", "yakni", "dalam"
-                }
+                # Use DB-loaded set
                 extracted_words = set(extracted_lower.split())
-                if not extracted_words.isdisjoint(INVALID_NAME_PARTICLES):
+                if not extracted_words.isdisjoint(self.person_invalid_particles):
                     continue
 
                 # Rule C: Common Header/False Positive Check (Startswith)
                 # If the detected text STARTS with a blacklist word, reject it.
                 # e.g. "Nomor Kartu Keluarga" (Starts with 'nomor') -> Reject
                 # e.g. "Tempat Lahir" (Starts with 'tempat') -> Reject
-                if any(extracted_lower.startswith(x) for x in COMMON_ID_FALSE_POSITIVES):
+                # Use DB-loaded set
+                if any(extracted_lower.startswith(x) for x in self.common_id_false_positives):
                     continue
 
                 # Rule D: Negative Context Lookbehind (e.g. "Jalan Name")
@@ -211,7 +183,8 @@ class CustomPIIScanner:
                 preceding_text = text[max(0, res.start - 35) : res.start].lower()
                 preceding_words = set(re.findall(r'\w+', preceding_text))
                 
-                if not preceding_words.isdisjoint(PERSON_NEGATIVE_CONTEXTS):
+                # Use DB-loaded set
+                if not preceding_words.isdisjoint(self.person_negative_contexts):
                     # Found a negative context word, so text is likely NOT a person
                     continue
 

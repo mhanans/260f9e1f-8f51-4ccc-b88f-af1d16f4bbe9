@@ -28,8 +28,8 @@ DEFAULT_INDO_RULES = [
         "entity_type": "ID_KK",
         "rule_type": "regex",
         "pattern": r"\b\d{16}\b",
-        "score": 0.4,
-        "context_keywords": json.dumps(["kk", "kartu keluarga", "no_kk"]),
+        "score": 0.5,
+        "context_keywords": json.dumps(["kk", "keluarga", "family", "card"]),
         "is_active": True
     },
     {
@@ -42,12 +42,12 @@ DEFAULT_INDO_RULES = [
         "is_active": True
     },
     {
-        "name": "IndonesianPhoneNumberRecognizer",
+        "name": "IndoPhoneNumber",
         "entity_type": "PHONE_NUMBER",
         "rule_type": "regex",
-        "pattern": r"\b(\+62|62|0)8[1-9][0-9]{6,11}\b",
+        "pattern": r"(\+62|62|0)8[1-9][0-9]{6,10}",
         "score": 0.6,
-        "context_keywords": json.dumps(["telp", "hp", "mobile", "phone", "wa", "whatsapp", "contact"]),
+        "context_keywords": json.dumps(["telp", "wa", "hp", "phone", "mobile"]),
         "is_active": True
     },
     {
@@ -114,3 +114,85 @@ DEFAULT_INDO_RULES = [
         "is_active": True
     }
 ]
+
+# --- DYNAMIC SEEDING FOR PERSON FILTERS ---
+# To avoid manually listing hundreds of rules, we define them here and extend the list.
+
+_person_false_positives = [
+    # Admin
+    "jalan", "jl", "jl.", "gang", "gg", "rt", "rw", "no", "nomor", 
+    "kecamatan", "kelurahan", "kabupaten", "kota", "provinsi", 
+    "blok", "lantai", "gedung", "menara", "kode", "pos", "komplek",
+    # Biz
+    "pt", "cv", "persero", "tbk", "ud", "bank", "kcp", "kc", "unit", 
+    "kantor", "cabang", "pusat", "divisi", "bagian", "departemen",
+    "direktur", "manager", "staf", "admin", "hrd", "pic", "cs",
+    "pembayaran", "transaksi", "saldo", "total", "rupiah", "transfer",
+    "rekening", "biaya", "tagihan", "faktur", "invoice", "kwitansi",
+    "po", "pr", "order", "qty", "amount", "harga", "diskon",
+    # Time
+    "tanggal", "bulan", "tahun", "jam", "pukul", "waktu", "hari",
+    "senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu",
+    "januari", "februari", "maret", "april", "mei", "juni", 
+    "juli", "agustus", "september", "oktober", "november", "desember",
+    # Formal
+    "hormat", "kami", "kita", "saya", "anda", "beliau", "mereka",
+    "ketua", "sekretaris", "bendahara", "anggota", "pimpinan",
+    "kepada", "yth", "dari", "hal", "lampiran", "perihal", "tembusan",
+    "catatan", "keterangan", "status", "aktif", "nonaktif", "valid",
+    "bapak", "ibu", "sdr", "sdri", "saudara", "pemohon", "penerima",
+    # Generic
+    "jenis", "kelamin", "laki-laki", "perempuan", "pria", "wanita",
+    "tempat", "lahir", "nrp", "nik", "nis", "nip", "ktp", "sim", "npwp",
+    "kartu", "keluarga", "kk"
+]
+
+_person_negative_contexts = [
+    "jalan", "jl", "jl.", "loc", "lokasi", "alamat", "address",
+    "bank", "rekening", "atm", "bca", "bri", "mandiri", "bni",
+    "pt", "cv", "perusahaan", "company",
+    "kabupaten", "kota", "provinsi", "kec.", "kel.",
+    "status", "keterangan", "note", "desc", "perihal", "hal",
+    "tanggal", "date", "hari",
+    "jenis", "kelamin", "tempat", "lahir",
+    "nrp", "nis", "nip", "nik",
+    "nomor", "ktp", "kk", "npwp", "kartu", "keluarga"
+]
+
+_person_invalid_particles = [
+    "dan", "yang", "atau", "untuk", "adalah", "ini", "itu", "dengan",
+    "di", "ke", "dari", "pada", "tersebut", "bisa", "akan", "telah",
+    "sebagai", "jika", "maka", "tidak", "belum", "sudah", "lagi",
+    "oleh", "tentang", "seperti", "yaitu", "yakni", "dalam"
+]
+
+for word in set(_person_false_positives):
+    DEFAULT_INDO_RULES.append({
+        "name": f"fp_person_{word.replace('.', '')}",
+        "entity_type": "PERSON_FILTER",
+        "rule_type": "false_positive_person",
+        "pattern": word,
+        "score": 1.0,
+        "is_active": True
+    })
+
+for word in set(_person_negative_contexts):
+    DEFAULT_INDO_RULES.append({
+        "name": f"neg_ctx_{word.replace('.', '')}",
+        "entity_type": "PERSON_FILTER",
+        "rule_type": "negative_context_person",
+        "pattern": word,
+        "score": 1.0,
+        "is_active": True
+    })
+
+for word in set(_person_invalid_particles):
+    DEFAULT_INDO_RULES.append({
+        "name": f"inv_part_{word}",
+        "entity_type": "PERSON_FILTER",
+        "rule_type": "invalid_particle_person",
+        "pattern": word,
+        "score": 1.0,
+        "is_active": True
+    })
+```
