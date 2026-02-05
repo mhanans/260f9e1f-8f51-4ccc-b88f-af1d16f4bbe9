@@ -242,12 +242,32 @@ _sensitivity_map = {
     "NRP": "Spesifik"
 }
 
+
 for entity, sense in _sensitivity_map.items():
     DEFAULT_INDO_RULES.append({
         "name": f"sense_{entity.lower()}",
         "entity_type": entity,
         "rule_type": "sensitivity",
         "pattern": sense, # Storing level in pattern field
+        "score": 1.0,
+        "is_active": True
+    })
+
+# --- DEFAULT DOCUMENT CLASSIFICATION RULES ---
+# Previously hardcoded in classification.py, now DB-driven
+_classification_map = [
+    {"category": "Financial", "keywords": ["gaji", "salary", "rekening", "bank", "transfer", "rupiah", "rp", "keuangan", "pajak", "invoice", "tagihan"]},
+    {"category": "Health", "keywords": ["sakit", "diagnosa", "dokter", "rs", "rawat", "darah", "medis", "pasien", "obat", "klinik"]},
+    {"category": "HR", "keywords": ["karyawan", "pegawai", "cuti", "absensi", "kontrak", "rekrutmen", "hrd", "cv", "lamaran"]},
+    {"category": "Legal", "keywords": ["perjanjian", "hukum", "pidana", "perdata", "pasal", "uu", "regulasi", "notaris", "akta"]}
+]
+
+for item in _classification_map:
+    DEFAULT_INDO_RULES.append({
+        "name": f"class_{item['category']}",
+        "entity_type": "DOC_CLASSIFICATION",
+        "rule_type": "classification",
+        "pattern": ",".join(item["keywords"]), # Store keywords as CSV
         "score": 1.0,
         "is_active": True
     })

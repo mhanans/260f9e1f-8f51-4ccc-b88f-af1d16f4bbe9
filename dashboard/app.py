@@ -345,6 +345,7 @@ def main():
                 if st.checkbox(f"{conn['name']} ({conn['type']})", value=True): targets.append(conn)
             
             if st.button("Start Auto Scan", type="primary"):
+                classification_engine.load_config() # Ensure latest sensitivity/context rules
                 results = []
                 with st.status("Scanning targets...") as status:
                      for t in targets:
@@ -550,11 +551,59 @@ def main():
         exclude_rules = [r for r in all_rules if r["rule_type"] == "exclude_entity"] # Whole entity types to ignore
         sensitivity_rules = [r for r in all_rules if r["rule_type"] == "sensitivity"] # Entity -> Sensitivity Map
          
-        tab_detect, tab_class, tab_ignore = st.tabs(["🕵️ Detection Rules (Regex)", "🏷️ Sensitivity & Tags", "🚫 Ignore Lists"])
+        tab_detect, tab_class, tab_ignore, tab_doc_tags = st.tabs(["🕵️ Detection Rules (Regex)", "🏷️ Sensitivity & Tags", "🚫 Ignore Lists", "📄 Doc Tags"])
          
         # --- TAB 1: Detection Rules ---
         with tab_detect:
             st.subheader("Custom Regex Recognizers")
+# ... (existing tab_detect, tab_class, tab_ignore content ...
+
+        # --- TAB 4: Document Tags ---
+        with tab_doc_tags:
+            st.subheader("📄 Document Classification Rules")
+            st.caption("Auto-tag documents based on keywords (e.g. contains 'salary' -> Financial).")
+            
+            # Fetch and Organize
+            class_rules = [r for r in all_rules if r["rule_type"] == "classification"]
+            
+            # Group by Name (Category)
+            cat_map = {}
+            for r in class_rules:
+                cat_name = r["name"].replace("class_", "")
+                if cat_name not in cat_map: cat_map[cat_name] = []
+                cat_map[cat_name].append(r)
+            
+            # Display
+            for cat, rules_list in cat_map.items():
+                with st.expander(f"🏷️ {cat} ({len(rules_list)} rules)", expanded=False):
+                    for r in rules_list:
+                         c1, c2 = st.columns([4, 1])
+                         c1.code(r["pattern"])
+                         if c2.button("🗑️", key=f"del_cls_{r['id']}"):
+                             requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
+                             st.rerun()
+
+            st.divider()
+            st.write("### Add Classification Keyword")
+            with st.form("add_doc_class"):
+                c1, c2 = st.columns(2)
+                new_cat = c1.text_input("Category", placeholder="e.g. Confidential_Project")
+                new_key = c2.text_input("Keywords (comma sep)", placeholder="project_alpha, top_secret")
+                
+                if st.form_submit_button("Add Tag Rule"):
+                    if new_cat and new_key:
+                        safe_cat = new_cat.replace(" ", "_").strip()
+                        payload = {
+                            "name": f"class_{safe_cat}_{int(time.time())}", # Unique ID to allow multiple rules per category
+                            "rule_type": "classification",
+                            "pattern": new_key, 
+                            "entity_type": "DOC_TAG",
+                            "score": 1.0, 
+                            "is_active": True
+                        }
+                        res = requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
+                        if res.status_code == 200: st.success("Added!"); st.rerun()
+                        else: st.error(res.text)
              
             for r in regex_rules:
                 with st.expander(f"🧩 {r['entity_type']} ({r['name']})", expanded=False):

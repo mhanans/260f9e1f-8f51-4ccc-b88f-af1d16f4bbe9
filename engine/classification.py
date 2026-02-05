@@ -7,21 +7,21 @@ CONFIG_PATH = Path("config/scanner_rules.json")
 
 class ClassificationEngine:
     def __init__(self):
-        # 2. Context Rules (Automated Labeling) - kept hardcoded for now or can move to config too
-        self.context_rules = [
-            {"category": "Financial", "keywords": ["gaji", "salary", "rekening", "bank", "transfer", "rupiah", "rp", "keuangan", "pajak"]},
-            {"category": "Health", "keywords": ["sakit", "diagnosa", "dokter", "rs", "rawat", "darah", "medis", "pasien"]},
-            {"category": "HR", "keywords": ["karyawan", "pegawai", "cuti", "absensi", "kontrak", "rekrutmen", "hrd"]},
-            {"category": "Legal", "keywords": ["perjanjian", "hukum", "pidana", "perdata", "pasal", "uu", "regulasi"]}
-        ]
+        # Rules are now strictly loaded from DB (Source of Truth)
+        self.context_rules = [] 
+        self.sensitivity_map = {}
+        self.header_blacklist = []
         
         self.load_config()
 
     def load_config(self):
-        """Reloads mapping and denied headers from Database specific ScanRules."""
+        """Reloads mapping, denied headers, and document classification rules from Database."""
         self.sensitivity_map = {}
         self.header_blacklist = []
-        # context_rules defaults are hardcoded but we will try to append/override from DB
+        self.context_rules = []
+        
+        # Temp storage for classification merging
+        classification_map = {} # {category: set(keywords)}
         
         try:
             from sqlmodel import Session, select
@@ -31,40 +31,38 @@ class ClassificationEngine:
             with Session(engine) as session:
                 rules = session.exec(select(ScanRule).where(ScanRule.is_active == True)).all()
                 
-                # 1. Deny List (Header Blacklist)
-                self.header_blacklist = [r.pattern.lower() for r in rules if r.rule_type == "deny_list"] # Use deny_list type
-                
-                # 1.5 Exclude Entities (Scanner Logic usually, but good to have here if needed)
-                # (Scanner engine handles exclude separately)
-
-                # 2. Context Rules (Document Classification)
-                db_context_rules = {}
                 for r in rules:
-                    if r.rule_type == "classification":
-                        cat = r.name
-                        if cat not in db_context_rules:
-                            db_context_rules[cat] = set()
-                        keywords = [k.strip() for k in r.pattern.split(',') if k.strip()]
-                        for k in keywords:
-                            db_context_rules[cat].add(k)
+                    # 1. Deny List (Header Blacklist)
+                    if r.rule_type == "deny_list":
+                        self.header_blacklist.append(r.pattern.lower())
                     
-                    # 3. NEW: Sensitivity Map
+                    # 2. Document Classification (Context Tags)
+                    elif r.rule_type == "classification":
+                        # Name format usually "class_Financial", but we just use the raw name or parse it
+                        # Let's assume r.name IS the category or "class_Category"
+                        cat_name = r.name.replace("class_", "") if r.name.startswith("class_") else r.name
+                        
+                        if cat_name not in classification_map:
+                            classification_map[cat_name] = set()
+                        
+                        # Pattern contains CSV keywords e.g. "gaji,salary"
+                        keywords = [k.strip().lower() for k in r.pattern.split(',') if k.strip()]
+                        classification_map[cat_name].update(keywords)
+                    
+                    # 3. Sensitivity Map
                     elif r.rule_type == "sensitivity":
-                        # Pattern = Classification Label, Entity_Type = PII Type
                         if r.entity_type:
                             self.sensitivity_map[r.entity_type] = r.pattern
 
-                # Merge Context Rules
-                for rule in self.context_rules:
-                    cat = rule["category"]
-                    if cat in db_context_rules:
-                        rule["keywords"].extend(list(db_context_rules[cat]))
-                        del db_context_rules[cat]
-                
-                for cat, keywords in db_context_rules.items():
-                    self.context_rules.append({"category": cat, "keywords": list(keywords)})
+                # Finalize Classification Rules List
+                for cat, keywords in classification_map.items():
+                    self.context_rules.append({
+                        "category": cat,
+                        "keywords": list(keywords)
+                    })
 
         except Exception as e:
+            # Fallback if DB connection fails early
             print(f"Error loading classification rules from DB: {e}")
             pass
 
