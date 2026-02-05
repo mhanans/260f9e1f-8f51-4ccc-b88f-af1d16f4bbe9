@@ -130,13 +130,45 @@ class CustomPIIScanner:
         # 5. Threshold Filter (Score > 0.4)
         # Note: We use 'en' as the pipeline language to leverage the English NLP model for context/NER.
         # Custom Indonesian recognizers are registered with supported_language=None, so they run alongside English rules.
-        results = self.analyzer.analyze(
+        raw_results = self.analyzer.analyze(
             text=text, 
             language='en',
             score_threshold=0.4,
             context=context
         )
+
+        # --- DEDUPLICATION & PRIORITIZATION ---
+        # 1. Sort by Start position, then Score (desc), then prefer ID_ prefix
+        # This puts the "Best" candidate for a span first.
+        def priority_key(res):
+            is_custom = 1 if res.entity_type.startswith("ID_") else 0
+            return (res.start, -is_custom, -res.score)
         
+        raw_results.sort(key=priority_key)
+
+        results = []
+        if raw_results:
+            # Greedy overlap removal
+            # Since we sorted by Start -> Custom -> Score, the first one we see is the "best" for that start pos.
+            # We just need to make sure we don't add something that heavily overlaps a previously added chosen entity.
+            
+            # Note: Presidio usually handles non-overlapping, but since we mix languages/recognizers, overlaps happen.
+            
+            last_end = -1
+            for res in raw_results:
+                # If this result starts before the previous one ended, it's an overlap.
+                # However, strict strictly > might kill nested entities. 
+                # For PII scanning, we usually want the longest/best match.
+                # Let's check overlap ratio.
+                if res.start < last_end:
+                    # Overlap detected. 
+                    # Because of our sort order, the previous one was "better" (or started earlier).
+                    # We skip this one (the "duplicate" or "inferior" one).
+                    continue
+                
+                results.append(res)
+                last_end = res.end
+
         output = []
         for res in results:
             if res.entity_type == "DENY_LIST": continue
@@ -205,7 +237,8 @@ class CustomPIIScanner:
                 if any(x in extracted_text.lower() for x in [".pdf", ".csv", "health", "storybook", "version"]): continue
 
             # 3. Filter PHONE_NUMBER Noise (e.g. coordinates like 0.8123 or short numeric strings)
-            if res.entity_type == "PHONE_NUMBER":
+            # We check both standard Presidio "PHONE_NUMBER" and our custom "ID_PHONE_NUMBER"
+            if res.entity_type in ["PHONE_NUMBER", "ID_PHONE_NUMBER"]:
                 # Reject floats (e.g. 0.8269353) which are likely confidence scores from raw text
                 if re.match(r"^\d+\.\d+$", extracted_text): continue
                 # Reject if too short (e.g. < 7 digits)

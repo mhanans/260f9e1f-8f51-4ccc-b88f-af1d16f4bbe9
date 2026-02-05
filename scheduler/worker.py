@@ -121,10 +121,19 @@ def scan_datasource_task(config_id: int):
                     pii_count_total += 1
                     found_types.add(f.entity_type)
                     
+                    # Extract the actual PII text substring
+                    full_val_str = str(original_item.get("value", ""))
+                    detected_val = full_val_str[f.start:f.end]
+                    
+                    # User Request: Save actual name for PERSON, but keep others null/masked
+                    sample_payload = None
+                    if f.entity_type == "PERSON":
+                        sample_payload = detected_val
+                    
                     location_meta = {
                         "container": original_item.get("container"),
                         "field": original_item.get("field"),
-                        "row_sample": str(original_item.get("value"))[:50]
+                        "row_sample": full_val_str[:50]
                     }
                     
                     result = ScanResult(
@@ -134,7 +143,7 @@ def scan_datasource_task(config_id: int):
                         pii_type=f.entity_type,
                         count=1,
                         confidence_score=f.score,
-                        sample_data=None, 
+                        sample_data=sample_payload, 
                         location_metadata=json.dumps(location_meta),
                         is_encrypted=False 
                     )

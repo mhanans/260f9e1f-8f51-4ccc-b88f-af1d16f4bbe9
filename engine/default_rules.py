@@ -43,7 +43,7 @@ DEFAULT_INDO_RULES = [
     },
     {
         "name": "IndoPhoneNumber",
-        "entity_type": "PHONE_NUMBER",
+        "entity_type": "ID_PHONE_NUMBER",
         "rule_type": "regex",
         "pattern": r"(\+62|62|0)8[1-9][0-9]{6,10}",
         "score": 0.6,
@@ -52,7 +52,7 @@ DEFAULT_INDO_RULES = [
     },
     {
         "name": "BankAccountNumberRecognizer",
-        "entity_type": "FIN_BANK_ACCT_ID",
+        "entity_type": "ID_BANK_ACCOUNT",
         "rule_type": "regex",
         "pattern": r"\b\d{10,16}\b",
         "score": 0.3,
@@ -61,7 +61,7 @@ DEFAULT_INDO_RULES = [
     },
     {
         "name": "MoneyRecognizer",
-        "entity_type": "FIN_AMT",
+        "entity_type": "ID_FINANCE_AMOUNT",
         "rule_type": "regex",
         "pattern": r"\b(Rp|IDR)\s*\.?[0-9\.,]+",
         "score": 0.6,
@@ -70,7 +70,7 @@ DEFAULT_INDO_RULES = [
     },
     {
         "name": "OrganizationNameRecognizer",
-        "entity_type": "ORGANIZATION",
+        "entity_type": "ID_ORGANIZATION",
         "rule_type": "regex",
         "pattern": r"\b(PT|CV|Yayasan|UD|Firma|Koperasi|Persero)\s+[A-Z][a-zA-Z0-9\s\.]+",
         "score": 0.6,
@@ -79,7 +79,7 @@ DEFAULT_INDO_RULES = [
     },
     {
         "name": "SocialMediaAccountRecognizer",
-        "entity_type": "SOCIAL_MEDIA",
+        "entity_type": "ID_SOCIAL_MEDIA",
         "rule_type": "regex",
         "pattern": r"(?:^|\s)@(\w{1,30})",
         "score": 0.5,
@@ -88,7 +88,7 @@ DEFAULT_INDO_RULES = [
     },
     {
             "name": "LinkedinAccountRecognizer",
-            "entity_type": "SOCIAL_MEDIA",
+            "entity_type": "ID_SOCIAL_MEDIA",
             "rule_type": "regex",
             "pattern": r"linkedin\.com\/in\/[\w-]+",
             "score": 0.7,
@@ -97,7 +97,7 @@ DEFAULT_INDO_RULES = [
     },
     {
         "name": "ProjectNameRecognizer",
-        "entity_type": "PROJECT_NAME",
+        "entity_type": "ID_PROJECT_NAME",
         "rule_type": "regex",
         "pattern": r"\b(Proyek|Project)\s+[A-Z][a-zA-Z0-9\s]+",
         "score": 0.5,
@@ -106,7 +106,7 @@ DEFAULT_INDO_RULES = [
     },
     {
         "name": "EmailRecognizer",
-        "entity_type": "EMAIL_ADDRESS",
+        "entity_type": "ID_EMAIL",
         "rule_type": "regex",
         "pattern": r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
         "score": 0.6,
