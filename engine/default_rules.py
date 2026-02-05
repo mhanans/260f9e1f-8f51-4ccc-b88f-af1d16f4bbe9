@@ -195,4 +195,3 @@ for word in set(_person_invalid_particles):
         "score": 1.0,
         "is_active": True
     })
-```
