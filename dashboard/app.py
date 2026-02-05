@@ -144,7 +144,273 @@ def main():
     if "token" not in st.session_state: login(); return
 
     st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Go to", ["📂 Data Explorer", "🗂️ Connections", "🚀 Scan Manager", "🔗 Data Lineage", "⚙️ Rules Engine", "📊 Dashboard", "📜 Audit Logs"])
+    elif page == "✅ Compliance Registry":
+        st.title("✅ Compliance Registry")
+        st.caption("Master list of confirmed Personal Data assets (ROPA basis).")
+        
+        # Load Saved Data
+        try:
+            res = requests.get(f"{API_URL}/compliance/", headers=headers)
+            if res.status_code == 200:
+                saved_data = res.json()
+            else:
+                st.error("Failed to load compliance data.")
+                saved_data = []
+        except Exception as e:
+            st.error(f"API Connection Error: {e}")
+            saved_data = []
+
+        if saved_data:
+            df_comp = pd.DataFrame(saved_data)
+            
+            # Filters
+            c1, c2, c3 = st.columns(3)
+            f_source = c1.multiselect("Source", df_comp["source"].unique())
+            f_type = c2.multiselect("PII Type", df_comp["pii_type"].unique())
+            f_status = c3.multiselect("Status", df_comp["status"].unique())
+            
+            if f_source: df_comp = df_comp[df_comp["source"].isin(f_source)]
+            if f_type: df_comp = df_comp[df_comp["pii_type"].isin(f_type)]
+            if f_status: df_comp = df_comp[df_comp["status"].isin(f_status)]
+            
+            # Interactive Editor for Quick Updates
+            st.subheader(f"Registered Assets ({len(df_comp)})")
+            
+            # Layout for editor
+            edited_comp = st.data_editor(
+                df_comp,
+                column_config={
+                    "id": st.column_config.NumberColumn("ID", disabled=True),
+                    "source": st.column_config.TextColumn("Source", disabled=True),
+                    "location": st.column_config.TextColumn("Location", disabled=True),
+                    "pii_type": st.column_config.TextColumn("Type", disabled=True),
+                    "confidence_score": st.column_config.NumberColumn("Conf.", format="%.2f", disabled=True),
+                    "status": st.column_config.SelectboxColumn("Status", options=["Active", "False Positive", "Resolved", "Archived"]),
+                    "purpose": st.column_config.SelectboxColumn("Purpose", options=["Recruitment", "Payroll", "Marketing", "Legal", "Operational", "Other"]),
+                    "sensitivity": st.column_config.SelectboxColumn("Sensitivity", options=["Spesifik", "Umum", "High", "Medium", "Low"])
+                },
+                use_container_width=True,
+                key="compliance_editor",
+                num_rows="dynamic" # Allow deletion
+            )
+            
+            # Detect Changes
+            if st.button("💾 Save Registry Changes"):
+                # Ideally, we diff 'edited_comp' with 'saved_data' or assume row-by-row update
+                # For simplicity, we loop and PUT updates.
+                progress = st.progress(0)
+                for i, row in edited_comp.iterrows():
+                    # Check if modified? (Optimization skipped for prototype)
+                    # We need the ID.
+                    if "id" in row and row["id"]:
+                         payload = {
+                             "purpose": row["purpose"],
+                             "status": row["status"],
+                             "sensitivity": row["sensitivity"],
+                             "source": row["source"], # required structure
+                             "location": row["location"],
+                             "pii_type": row["pii_type"],
+                             "confidence_score": row["confidence_score"]
+                         }
+                         requests.put(f"{API_URL}/compliance/{row['id']}", headers=headers, json=payload)
+                    progress.progress((i + 1) / len(edited_comp))
+                st.success("Registry Updated!")
+                st.rerun()
+
+        else:
+            st.info("No data registered yet. Go to 'Scan Manager' to discover and save assets.")
+
+    # --- Page: Scan Manager ---
+    if page == "🚀 Scan Manager":
+        st.title("🚀 Scan Assistant")
+        # ... (Scan Logic Hidden for Brevity, implicitly preserved if not overwritten) ...
+        # RE-INJECTING SCAN LOGIC as we are inside the condition
+        
+        # Mode Selection
+        scan_mode = st.radio("Scan Mode", ["🚀 Quick Scan (Auto)", "🎯 TargetedDB Scan (Query Builder)"], horizontal=True)
+        
+        if scan_mode == "🚀 Quick Scan (Auto)":
+            st.info("Runs an automatic sample scan on all selected sources.")
+            targets = []
+            for conn in st.session_state["data_connections"]:
+                if st.checkbox(f"{conn['name']} ({conn['type']})", value=True): targets.append(conn)
+            
+            if st.button("Start Auto Scan", type="primary"):
+                results = []
+                with st.status("Scanning targets...") as status:
+                     for t in targets:
+                        status.update(label=f"Scanning {t['name']}...", state="running")
+                        
+                        # Local Scan
+                        if t["type"] == "Local Storage Path":
+                            path=Path(t["details"])
+                            if path.exists():
+                                 for f in path.glob("*"):
+                                     if f.is_file():
+                                         try: 
+                                            with open(f,"rb") as fo:
+                                                res=requests.post(f"{API_URL}/scan/file", headers=headers, files={"file":(f.name,fo)})
+                                                if res.status_code==200:
+                                                    for r in res.json().get("results",[]):
+                                                        if classification_engine.is_false_positive(r["text"],r["type"]): continue
+                                                        results.append({"Source":t["name"],"Table/File Location":f.name,"Type":r["type"],"Data":r["text"],"Category":classification_engine.classify_sensitivity(r["type"])})
+                                         except:pass
+                        
+                        # S3 Scan
+                        elif t["type"] == "S3 Object Storage" and "s3_creds" in t:
+                             c=t["s3_creds"]; s3_connector.connect(c["endpoint"],c["access"],c["secret"],c["bucket"])
+                             for obj in s3_connector.list_files():
+                                 con=s3_connector.get_file_content(obj['Key'])
+                                 if con:
+                                     res=requests.post(f"{API_URL}/scan/file", headers=headers, files={"file":(obj['Key'],io.BytesIO(con))})
+                                     if res.status_code==200:
+                                         for r in res.json().get("results",[]):
+                                             if classification_engine.is_false_positive(r["text"],r["type"]): continue
+                                             results.append({"Source":t["name"],"Table/File Location":obj['Key'],"Type":r["type"],"Data":r["text"],"Category":classification_engine.classify_sensitivity(r["type"])})
+                        
+                        # DB/API Scan (Auto)
+                        elif "Database" in t["type"] or "API" in t["type"]:
+                             internal_type = 'postgresql' if 'Database' in t["type"] else 'api_get'
+                             structured_data = db_connector.scan_source(internal_type, t["details"])
+                             
+                             if structured_data:
+                                 for item in structured_data:
+                                     text_to_scan = item.get("value", "") 
+                                     if not text_to_scan: continue
+                                     
+                                     res = requests.post(f"{API_URL}/scan/text", headers=headers, json={"text": text_to_scan})
+                                     if res.status_code == 200:
+                                         for r in res.json().get("results", []):
+                                             if classification_engine.is_false_positive(r["text"], r["type"]): continue
+                                             loc=f"{item.get('container','?')} ({item.get('field','?')})"
+                                             results.append({"Source":t["name"],"Table/File Location":loc,"Type":r["type"],"Data":r["text"],"Category":classification_engine.classify_sensitivity(r["type"])})
+                     st.session_state["scan_results"] = results
+                     status.update(label="Complete", state="complete")
+        
+        elif scan_mode == "🎯 TargetedDB Scan (Query Builder)":
+            st.subheader("Targeted Database Scanning")
+            db_conns = [c for c in st.session_state["data_connections"] if "Database" in c["type"]]
+            if not db_conns: st.warning("No Database connections found.")
+            else:
+                selected_db_name = st.selectbox("Select Database", [c["name"] for c in db_conns])
+                target_conn = next(c for c in db_conns if c["name"] == selected_db_name)
+                
+                if st.button("🕷️ Crawl Metadata (Discover Schema)"):
+                    with st.spinner("Crawling Schema..."):
+                        meta = db_connector.get_schema_metadata('postgresql', target_conn["details"])
+                        st.session_state["db_metadata"] = meta
+                
+                if "db_metadata" in st.session_state:
+                    meta = st.session_state["db_metadata"]
+                    st.write(f"### Discovered Tables: {len(meta)}")
+                    with st.expander("🔎 Define Scan Criteria", expanded=True):
+                        c1, c2, c3 = st.columns(3)
+                        filter_tbl = c1.text_input("Table Name Contains", "")
+                        filter_col = c2.text_input("Column Name Contains", "")
+                        filter_rows = c3.number_input("Min Row Count", 0, value=0)
+                    filtered_tables = []
+                    for t in meta:
+                        match_tbl = filter_tbl.lower() in t["table"].lower()
+                        match_col = True
+                        if filter_col: match_col = any(filter_col.lower() in c.lower() for c in t["columns"])
+                        match_rows = t["row_count"] >= filter_rows
+                        if match_tbl and match_col and match_rows: filtered_tables.append(t)
+                    st.write(f"#### 🎯 Audit Candidates ({len(filtered_tables)} Tables)")
+                    selected_tables = []
+                    for t in filtered_tables:
+                        is_checked = st.checkbox(f"**{t['table']}** (Rows: {t['row_count']}) | Cols: {len(t['columns'])}", value=True, key=f"tbl_{t['table']}")
+                        if is_checked: selected_tables.append(t["table"])
+                    st.divider()
+                    scan_limit = st.slider("Max Rows to Scan per Table", 10, 1000, 50)
+                    
+                    if st.button("🚀 Start Targeted Scan", type="primary", disabled=not selected_tables):
+                        results = []
+                        with st.status("Performing Deep Scan...") as status:
+                            for tbl in selected_tables:
+                                status.update(label=f"Scanning Table: {tbl}...", state="running")
+                                raw_data = db_connector.scan_target('postgresql', target_conn["details"], tbl, limit=scan_limit)
+                                for item in raw_data:
+                                    text_to_scan = item.get("value", "")
+                                    if not text_to_scan: continue
+
+                                    res = requests.post(f"{API_URL}/scan/text", headers=headers, json={"text": text_to_scan})
+                                    if res.status_code == 200:
+                                        for r in res.json().get("results", []):
+                                            if classification_engine.is_false_positive(r["text"], r["type"]): continue
+                                            results.append({
+                                                "Source": target_conn["name"],
+                                                "Table/File Location": f"{item.get('container','?')} ({item.get('field','?')})",
+                                                "Type": r["type"],
+                                                "Data": r["text"],
+                                                "Category": classification_engine.classify_sensitivity(r["type"])
+                                            })
+                            st.session_state["scan_results"] = results
+                            status.update(label="✅ Scan Complete!", state="complete")
+        
+        if "scan_results" in st.session_state:
+            st.divider()
+            results = st.session_state["scan_results"]
+            df = pd.DataFrame(results)
+            
+            if not df.empty:
+                # --- Purpose Mapping Integration ---
+                purposes = st.session_state.get("purposes", {})
+                display_df = df.copy()
+                display_df["Purpose"] = display_df.apply(lambda x: purposes.get(f"{x['Source']}|{x['Table/File Location']}", ""), axis=1)
+                display_df["Save"] = True # Add default check to save
+                
+                # Header & Controls
+                c1, c2 = st.columns([3, 1])
+                c1.write("### 🚨 Detected Data Candidates")
+                c1.caption("Review findings below. Uncheck 'Save' to discard false positives or duplicates.")
+                show_unmasked = c2.toggle("👁️ Show Unmasked Data", value=False)
+                
+                # Masking
+                if not show_unmasked:
+                     display_df["Data"] = display_df.apply(lambda x: mask_data(x["Data"], x.get("Type")), axis=1)
+                
+                # Interactive Table
+                edited_df = st.data_editor(
+                    display_df, 
+                    column_config={
+                        "Save": st.column_config.CheckboxColumn("💾 Save?", help="Check to register this finding to Compliance Registry", default=True),
+                        "Source": st.column_config.TextColumn("Source", disabled=True),
+                        "Table/File Location": st.column_config.TextColumn("Location", disabled=True),
+                        "Type": st.column_config.TextColumn("PII Type", disabled=True),
+                        "Data": st.column_config.TextColumn("Content", disabled=True),
+                        "Category": st.column_config.TextColumn("Sensitivity", disabled=True),
+                        "Purpose": st.column_config.SelectboxColumn("Purpose", options=["Recruitment", "Marketing", "HR", "Legal", "Other"], required=False)
+                    },
+                    use_container_width=True,
+                    num_rows="fixed",
+                    key="scan_results_editor"
+                )
+                
+                # --- Data Saving Logic ---
+                col_btn, col_info = st.columns([1, 4])
+                if col_btn.button("💾 CONFIRM & SAVE", type="primary"):
+                    saved_count = 0
+                    with st.spinner("Registering assets..."):
+                        for idx, row in edited_df.iterrows():
+                            if row["Save"]:
+                                # Construct Payload matching DetectedData model
+                                payload = {
+                                    "source": row["Source"],
+                                    "location": row["Table/File Location"],
+                                    "pii_type": row["Type"],
+                                    "sensitivity": row["Category"],
+                                    "purpose": row["Purpose"] if row["Purpose"] else "Unassigned",
+                                    "confidence_score": 1.0, # Confirmed by user
+                                    "status": "Active"
+                                }
+                                try:
+                                    requests.post(f"{API_URL}/compliance/", headers=headers, json=payload)
+                                    saved_count += 1
+                                except Exception as e:
+                                    logger.error(f"Failed to save row {idx}: {e}")
+                    
+                    st.success(f"Successfully registered {saved_count} compliance assets! Check 'Compliance Registry'.")
+
     headers = {"Authorization": f"Bearer {st.session_state['token']}"}
 
     # ... Pages: Explorer, Connections (Same) ...
@@ -253,60 +519,158 @@ def main():
                  save_connections(st.session_state["data_connections"])
                  st.rerun()
     elif page == "⚙️ Rules Engine": 
-        # (Same as before)
-         st.title("⚙️ Rules Management")
-         st.caption("Manage detection patterns. Ensure 1 rule per Entity.")
-         config = load_rules_config()
-         recogs = config.get("custom_recognizers", [])
-         with st.expander("🧪 Test a Regex Pattern", expanded=True):
-            cols = st.columns([3, 1])
-            test_regex = cols[0].text_input("Enter Regex Pattern", r"\b\d{16}\b")
-            test_text = st.text_area("Test String (Sample Data)", "Ini adalah NIK saya 3201123412341234 yang valid.")
-            if st.button("Run Test"):
-                try:
-                    matches = re.finditer(test_regex, test_text)
-                    results = [m.group(0) for m in matches]
-                    if results: st.success(f"✅ Found {len(results)} matches: {results}")
-                    else: st.warning("No matches found.")
-                except Exception as e: st.error(f"Regex Error: {e}")
-         st.divider()
-         st.subheader("Manage Detection Rules")
-         existing_entities = set([r["entity"] for r in recogs])
-         for i, rec in enumerate(recogs):
-            with st.container():
-                with st.expander(f"🧩 {rec['entity']} ({rec['name']})", expanded=False):
-                    c1, c2 = st.columns([3, 1])
-                    new_regex = c1.text_input("Regex", value=rec["regex"], key=f"rex_{i}")
-                    new_score = c2.slider("Score", 0.0, 1.0, rec["score"], key=f"sco_{i}")
-                    new_ctx = st.text_input("Context (comma sep.)", value=",".join(rec.get("context", [])), key=f"ctx_{i}")
-                    is_active = st.checkbox("Active", value=rec.get("active", True), key=f"act_{i}")
-                    if st.button("🗑️ Delete Rule", key=f"del_rule_{i}"):
-                        recogs.pop(i)
-                        config["custom_recognizers"] = recogs
-                        save_rules_config(config)
-                        st.rerun()
-                    rec["regex"] = new_regex
-                    rec["score"] = new_score
-                    rec["context"] = [x.strip() for x in new_ctx.split(",") if x.strip()]
-                    rec["active"] = is_active
-         st.write("### Add New Rule")
-         with st.form("add_rule_form"):
-            new_entity = st.text_input("Entity Name (Unique)", placeholder="ID_NEW_CARD").upper()
-            new_pattern = st.text_input("Regex Pattern", placeholder=r"\b[A-Z]{3}-\d{4}\b")
-            if st.form_submit_button("Add Rule"):
-                if not new_entity or not new_pattern: st.error("Entity Name and Regex are required.")
-                elif new_entity in [r["entity"] for r in recogs]: st.error(f"Rule for {new_entity} already exists!")
-                else:
-                    new_rule = {"name": f"{new_entity.lower()}_recognizer", "entity": new_entity, "regex": new_pattern, "score": 0.5, "context": [], "active": True}
-                    recogs.append(new_rule)
-                    config["custom_recognizers"] = recogs
-                    save_rules_config(config)
-                    st.success(f"Added rule for {new_entity}"); st.rerun()
-         st.divider()
-         if st.button("💾 SAVE ALL CHANGES", type="primary"):
-            config["custom_recognizers"] = recogs
-            save_rules_config(config)
-            st.success("Configuration Saved & Engine Reloaded!")
+         st.title("⚙️ Rules & Classification Engine")
+         st.caption("Manage detection patterns, sensitivity classification, and ignore lists.")
+         
+         # Load Rules from API (Single Source of Truth)
+         try:
+             rules_res = requests.get(f"{API_URL}/config/rules", headers=headers)
+             if rules_res.status_code == 200:
+                 all_rules = rules_res.json()
+             else:
+                 all_rules = []
+                 st.error("Failed to load rules from API")
+         except:
+             all_rules = []
+         
+         # Categorize Rules
+         regex_rules = [r for r in all_rules if r["rule_type"] == "regex"]
+         deny_rules = [r for r in all_rules if r["rule_type"] == "deny_list"] # String literals to ignore
+         exclude_rules = [r for r in all_rules if r["rule_type"] == "exclude_entity"] # Whole entity types to ignore
+         sensitivity_rules = [r for r in all_rules if r["rule_type"] == "sensitivity"] # Entity -> Sensitivity Map
+         
+         tab_detect, tab_class, tab_ignore = st.tabs(["🕵️ Detection Rules (Regex)", "🏷️ Sensitivity & Tags", "🚫 Ignore Lists"])
+         
+         # --- TAB 1: Detection Rules ---
+         with tab_detect:
+             st.subheader("Custom Regex Recognizers")
+             
+             for r in regex_rules:
+                 with st.expander(f"🧩 {r['entity_type']} ({r['name']})", expanded=False):
+                     c1, c2, c3 = st.columns([3, 1, 1])
+                     # We can't easily edit via API PUT without implemented update endpoint for all fields, 
+                     # but we can toggle active state.
+                     st.text_input("Regex", value=r["pattern"], disabled=True, key=f"d_rex_{r['id']}")
+                     st.slider("Score", 0.0, 1.0, r["score"], disabled=True, key=f"d_score_{r['id']}")
+                     
+                     is_active = st.toggle("Active", value=r["is_active"], key=f"act_{r['id']}")
+                     if is_active != r["is_active"]:
+                         requests.put(f"{API_URL}/config/rules/{r['id']}", headers=headers, params={"is_active": is_active})
+                         st.rerun()
+                         
+                     if st.button("🗑️ Delete", key=f"del_{r['id']}"):
+                         requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
+                         st.rerun()
+
+             st.divider()
+             st.write("### Add New Regex Rule")
+             with st.form("add_regex"):
+                c1, c2 = st.columns(2)
+                new_name = c1.text_input("Rule Name (Unique)", placeholder="my_custom_rule")
+                new_entity = c2.text_input("Entity Tag", placeholder="ID_CUSTOM").upper()
+                new_pattern = st.text_input("Regex Pattern", placeholder=r"\b\d{5}\b")
+                new_score = st.slider("Confidence Score", 0.1, 1.0, 0.5)
+                new_ctx = st.text_input("Context Words (comma sep)", placeholder="header, label")
+                
+                if st.form_submit_button("Add Detection Rule"):
+                    if new_name and new_entity and new_pattern:
+                        payload = {
+                            "name": new_name,
+                            "rule_type": "regex",
+                            "pattern": new_pattern,
+                            "score": new_score,
+                            "entity_type": new_entity,
+                            "context_keywords": json.dumps([x.strip() for x in new_ctx.split(",") if x.strip()]),
+                            "is_active": True
+                        }
+                        res = requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
+                        if res.status_code == 200: st.success("Added!"); st.rerun()
+                        else: st.error(res.text)
+
+         # --- TAB 2: Sensitivity Map ---
+         with tab_class:
+             st.subheader("Sensitivity Mapping")
+             st.caption("Map PII Entity Types (e.g., ID_NIK) to Classification Levels (e.g., Spesifik).")
+             
+             # Display current map
+             if sensitivity_rules:
+                 df_sens = pd.DataFrame(sensitivity_rules)
+                 st.dataframe(
+                     df_sens[["entity_type", "pattern"]].rename(columns={"entity_type": "PII Entity", "pattern": "Classification"}),
+                     use_container_width=True
+                 )
+                 
+                 # Delete UI requires ID lookup
+                 opts = {f"{r['entity_type']} -> {r['pattern']}": r['id'] for r in sensitivity_rules}
+                 del_target = st.selectbox("Select Rule to Delete", ["None"] + list(opts.keys()))
+                 if del_target != "None":
+                     if st.button("Remove Selected Mapping"):
+                         requests.delete(f"{API_URL}/config/rules/{opts[del_target]}", headers=headers)
+                         st.rerun()
+                         
+             st.divider()
+             st.write("### Add Classification Rule")
+             with st.form("add_class"):
+                 c1, c2 = st.columns(2)
+                 # Suggest entities from Detection Rules + Default Presidio
+                 known_entities = ["ID_NIK", "ID_NPWP", "PHONE_NUMBER", "EMAIL_ADDRESS", "PERSON", "LOCATION", "DATE_TIME"] 
+                 known_entities += list(set([r['entity_type'] for r in regex_rules]))
+                 
+                 s_entity = c1.selectbox("Entity Type", sorted(list(set(known_entities))))
+                 s_label = c2.text_input("Classification Label", "Spesifik (Confidential)")
+                 
+                 if st.form_submit_button("Map Entity"):
+                     payload = {
+                        "name": f"map_{s_entity}_{int(time.time())}", # unique logic
+                        "rule_type": "sensitivity",
+                        "pattern": s_label, # Storing label in 'pattern' field to reuse model
+                        "entity_type": s_entity,
+                        "score": 1.0, 
+                        "is_active": True
+                     }
+                     res = requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
+                     if res.status_code == 200: st.success("Mapped!"); st.rerun()
+                     else: st.error(res.text)
+
+         # --- TAB 3: Ignore Lists ---
+         with tab_ignore:
+             st.subheader("🚫 False Positive Management")
+             
+             c1, c2 = st.columns(2)
+             
+             with c1:
+                 st.write("#### Deny List (Strings)")
+                 st.caption("Exact text to always ignore (e.g., table headers).")
+                 for r in deny_rules:
+                     col_a, col_b = st.columns([4,1])
+                     col_a.code(r["pattern"])
+                     if col_b.button("❌", key=f"del_d_{r['id']}"):
+                         requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
+                         st.rerun()
+                 
+                 new_deny = st.text_input("Add String to Ignore")
+                 if st.button("Add to Deny List"):
+                     if new_deny:
+                         payload = {"name": f"deny_{int(time.time())}", "rule_type": "deny_list", "pattern": new_deny, "entity_type": "DENY", "score":1.0}
+                         requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
+                         st.rerun()
+             
+             with c2:
+                 st.write("#### Exclude Entities")
+                 st.caption("PII Types to completely disable scanning for.")
+                 for r in exclude_rules:
+                     col_a, col_b = st.columns([4,1])
+                     col_a.code(r["entity_type"]) # Assuming stored in entity_type or pattern
+                     if col_b.button("❌", key=f"del_e_{r['id']}"):
+                         requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
+                         st.rerun()
+                 
+                 new_ex = st.selectbox("Select Entity to Disable", ["DATE_TIME", "NRP", "LOCATION", "PERSON"])
+                 if st.button("Disable Entity"):
+                     payload = {"name": f"ex_{new_ex}_{int(time.time())}", "rule_type": "exclude_entity", "pattern": "IGNORE", "entity_type": new_ex, "score":1.0}
+                     requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
+                     st.rerun()
+
     elif page == "📊 Dashboard": 
         # (Same as before)
         st.title("📊 Security Dashboard")

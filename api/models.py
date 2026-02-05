@@ -55,9 +55,25 @@ class ScanResult(SQLModel, table=True):
 class ScanRule(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
-    rule_type: str # "regex", "deny_list", "keyword"
+    rule_type: str # "regex", "deny_list", "keyword", "exclude_entity"
     pattern: str # The regex string or keyword
     score: float = Field(default=0.5)
-    entity_type: str # "CUSTOM_ID", "CONFIDENTIAL_HEADER"
+    entity_type: str # "CUSTOM_ID", "CONFIDENTIAL_HEADER", "DENY"
     is_active: bool = Field(default=True)
     context_keywords: Optional[str] = None # JSON list of context words
+
+class DetectedData(SQLModel, table=True):
+    """
+    Stores confirmed/saved metadata of discovered PII.
+    Does NOT store the actual sensitive data value.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source: str # e.g. "HR_DB" or "resume.pdf"
+    location: str # e.g. "users_table (email_col)" or "Page 1"
+    pii_type: str # "EMAIL", "NIK"
+    sensitivity: str # "High", "Medium"
+    purpose: Optional[str] = None # "Marketing", "HR", etc.
+    confidence_score: float
+    status: str = Field(default="Active") # "Active", "False Positive", "Resolved"
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+

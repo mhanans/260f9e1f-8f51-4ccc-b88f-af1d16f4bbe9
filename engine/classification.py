@@ -32,37 +32,40 @@ class ClassificationEngine:
                 rules = session.exec(select(ScanRule).where(ScanRule.is_active == True)).all()
                 
                 # 1. Deny List (Header Blacklist)
-                self.header_blacklist = [r.pattern.lower() for r in rules if r.rule_type == "deny_list"]
+                self.header_blacklist = [r.pattern.lower() for r in rules if r.rule_type == "deny_list"] # Use deny_list type
                 
+                # 1.5 Exclude Entities (Scanner Logic usually, but good to have here if needed)
+                # (Scanner engine handles exclude separately)
+
                 # 2. Context Rules (Document Classification)
-                # We expect rules with type "classification"
-                # Name = Category (e.g. Financial), Pattern = Keyword (e.g. gaji) or Pattern = list of keywords stringified
-                
                 db_context_rules = {}
                 for r in rules:
                     if r.rule_type == "classification":
                         cat = r.name
                         if cat not in db_context_rules:
                             db_context_rules[cat] = set()
-                        # If pattern contain commas, split
                         keywords = [k.strip() for k in r.pattern.split(',') if k.strip()]
                         for k in keywords:
                             db_context_rules[cat].add(k)
-                
-                # Merge with default or replace? Let's append for now to ensure base functionality.
+                    
+                    # 3. NEW: Sensitivity Map
+                    elif r.rule_type == "sensitivity":
+                        # Pattern = Classification Label, Entity_Type = PII Type
+                        if r.entity_type:
+                            self.sensitivity_map[r.entity_type] = r.pattern
+
+                # Merge Context Rules
                 for rule in self.context_rules:
                     cat = rule["category"]
                     if cat in db_context_rules:
                         rule["keywords"].extend(list(db_context_rules[cat]))
                         del db_context_rules[cat]
                 
-                # Add remaining new categories
                 for cat, keywords in db_context_rules.items():
                     self.context_rules.append({"category": cat, "keywords": list(keywords)})
 
         except Exception as e:
             print(f"Error loading classification rules from DB: {e}")
-            # Ensure at least defaults are there (set in init)
             pass
 
     def classify_sensitivity(self, pii_type: str) -> str:

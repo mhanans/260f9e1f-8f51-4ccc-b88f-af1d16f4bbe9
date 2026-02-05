@@ -45,3 +45,18 @@ def delete_rule(rule_id: int, session: Session = Depends(get_session), current_u
     
     return {"status": "deleted"}
 
+@router.put("/rules/{rule_id}")
+def toggle_rule(rule_id: int, is_active: bool, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+    rule = session.get(ScanRule, rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    
+    rule.is_active = is_active
+    session.add(rule)
+    session.commit()
+    session.refresh(rule)
+    
+    # Reload engine
+    scanner_engine.reload_rules()
+    
+    return rule
