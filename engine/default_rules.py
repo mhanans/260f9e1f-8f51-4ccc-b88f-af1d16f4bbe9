@@ -15,13 +15,13 @@ DEFAULT_INDO_RULES = [
         "is_active": True
     },
     {
-            "name": "NPWPRecognizer",
-            "entity_type": "ID_NPWP",
-            "rule_type": "regex",
-            "pattern": r"\b\d{2}\.\d{3}\.\d{3}\.\d{1}-\d{3}\.\d{3}\b|\b\d{15,16}\b",
-            "score": 0.6,
-            "context_keywords": json.dumps(["npwp", "pajak", "wajib", "tax", "tin"]),
-            "is_active": True
+        "name": "NPWPRecognizer",
+        "entity_type": "ID_NPWP",
+        "rule_type": "regex",
+        "pattern": r"\b\d{2}\.\d{3}\.\d{3}\.\d{1}-\d{3}\.\d{3}\b|\b\d{15,16}\b",
+        "score": 0.6,
+        "context_keywords": json.dumps(["npwp", "pajak", "wajib", "tax", "tin"]),
+        "is_active": True
     },
     {
         "name": "KKNumberRecognizer",
