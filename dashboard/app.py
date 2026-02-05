@@ -144,6 +144,114 @@ def main():
     if "token" not in st.session_state: login(); return
 
     st.sidebar.title("Navigation")
+    page = st.sidebar.radio("Go to", ["📂 Data Explorer", "🗂️ Connections", "🚀 Scan Manager", "🔗 Data Lineage", "⚙️ Rules Engine", "✅ Compliance Registry", "📊 Dashboard", "📜 Audit Logs"])
+    headers = {"Authorization": f"Bearer {st.session_state['token']}"}
+
+    # ... Pages: Explorer, Connections (Same) ...
+    
+    if page == "📂 Data Explorer": 
+        # (Same as before)
+        st.title("📂 Data Explorer")
+        conn_options = {c["name"]: c for c in st.session_state["data_connections"] if "Storage" in c["type"]}
+        selected_conn_name = st.selectbox("Select Storage Source", list(conn_options.keys()) if conn_options else [])
+        if selected_conn_name:
+            conn = conn_options[selected_conn_name]
+            # [Local Logic]
+            if conn["type"] == "Local Storage Path":
+                path = Path(conn["details"])
+                with st.expander(f"📤 Upload to {conn['name']}", expanded=True):
+                    up_files = st.file_uploader("Drag & Drop", accept_multiple_files=True)
+                    if up_files:
+                        for f in up_files: save_uploaded_file(f, path); st.toast(f"Saved: {f.name}")
+                        st.rerun()
+                files = list(path.glob("*")) if path.exists() else []
+                st.write(f"### {len(files)} Items in Local Storage")
+                for f in files:
+                    c1, c2 = st.columns([6, 1])
+                    c1.markdown(f"<div class='file-box'>📄 {f.name}</div>", unsafe_allow_html=True)
+                    if c2.button("🗑️", key=f"d_{f.name}"): os.remove(f); st.rerun()
+            # [S3 Logic]
+            elif conn["type"] == "S3 Object Storage":
+                c = conn.get("s3_creds", {}) 
+                if c:
+                    if s3_connector.bucket_name != c.get("bucket"): s3_connector.connect(c["endpoint"], c["access"], c["secret"], c["bucket"])
+                    files = s3_connector.list_files()
+                    st.write(f"### {len(files)} Objects in Bucket")
+                    with st.expander("☁️ Upload", expanded=False):
+                        up_s3 = st.file_uploader("S3 Upload", accept_multiple_files=True)
+                        if up_s3: 
+                            for f in up_s3: s3_connector.upload_file(f, f.name)
+                            st.rerun()
+                    for f in files:
+                         c1, c2 = st.columns([6, 1])
+                         c1.markdown(f"<div class='file-box'>☁️ {f['Key']}</div>", unsafe_allow_html=True)
+                         if c2.button("🗑️", key=f"d_{f['Key']}"): s3_connector.delete_file(f['Key']); st.rerun()
+
+    elif page == "🗂️ Connections": 
+        st.title("🗂️ Connection Manager")
+        st.subheader(f"Active Sources ({len(st.session_state['data_connections'])})")
+        
+        conns = st.session_state["data_connections"]
+        for i, conn in enumerate(conns):
+            badge = get_badge_html(conn["type"])
+            display_details = conn.get("details", "")
+            if "s3_creds" in conn: display_details = f"Endpoint={conn['s3_creds']['endpoint']}; Bucket={conn['s3_creds']['bucket']}"
+            
+            with st.container():
+                cols = st.columns([0.7, 0.1, 0.1, 0.1])
+                cols[0].markdown(f"<div class='source-box'><div><strong>{conn['name']}</strong> {badge}<br><small>{display_details}</small></div></div>", unsafe_allow_html=True)
+                if cols[1].button("🔌", key=f"t_{i}"):
+                    if "s3_creds" in conn: 
+                         c = conn["s3_creds"]
+                         suc, msg = s3_connector.connect(c["endpoint"], c["access"], c["secret"], c["bucket"])
+                         if suc: st.toast("Success") 
+                         else: st.error(msg)
+                    elif "Database" in conn["type"]:
+                        suc, msg = db_connector.test_connection('postgresql', conn["details"])
+                        if suc: st.toast("Connected")
+                        else: st.error(msg)
+                    elif "API" in conn["type"]:
+                        suc, msg = db_connector.test_connection('api_get', conn["details"])
+                        if suc: st.toast(msg)
+                        else: st.error(msg)
+                if cols[3].button("🗑️", key=f"d_{i}"):
+                    st.session_state["data_connections"].pop(i)
+                    save_connections(st.session_state["data_connections"])
+                    st.rerun()
+
+        st.divider()
+        with st.expander("➕ Add New Data Source", expanded=False):
+             c1,c2 = st.columns([1,2])
+             ct=c1.selectbox("Type", ["API Endpoint", "PostgreSQL Database", "S3 Object Storage", "Local Storage Path"])
+             cn=c2.text_input("Name")
+             is_val=False; cd=""
+             s3c=None
+             
+             if ct=="Local Storage Path":
+                 p=st.text_input("Path", str(BASE_DIR.absolute()))
+                 if st.button("Add Path"): cd=p; is_val=True
+             elif "Database" in ct:
+                 c1,c2=st.columns(2); h=c1.text_input("Host","localhost"); p=c2.text_input("Port","5432")
+                 u=c1.text_input("User","postgres"); w=c2.text_input("Pass",type="password")
+                 d=st.text_input("DB","postgres")
+                 if st.button("Add DB"): cd=f"postgresql://{u}:{w}@{h}:{p}/{d}"; is_val=True
+             elif ct=="S3 Object Storage":
+                 c1,c2=st.columns(2); e=c1.text_input("Endpoint"); b=c2.text_input("Bucket")
+                 k=c1.text_input("Key"); s=c2.text_input("Secret",type="password")
+                 if st.button("Add S3"): 
+                     if not e.startswith("http"): e="http://"+e
+                     s3c={"endpoint":e,"bucket":b,"access":k,"secret":s}; is_val=True
+             elif ct=="API Endpoint":
+                 u = st.text_input("URL"); 
+                 if st.button("Add API"): cd=u; is_val=True
+
+             if is_val and cn:
+                 nc = {"id":str(time.time()),"name":cn,"type":ct,"details":cd}
+                 if s3c: nc["s3_creds"]=s3c
+                 st.session_state["data_connections"].append(nc)
+                 save_connections(st.session_state["data_connections"])
+                 st.rerun()
+
     elif page == "✅ Compliance Registry":
         st.title("✅ Compliance Registry")
         st.caption("Master list of confirmed Personal Data assets (ROPA basis).")
@@ -221,7 +329,7 @@ def main():
             st.info("No data registered yet. Go to 'Scan Manager' to discover and save assets.")
 
     # --- Page: Scan Manager ---
-    if page == "🚀 Scan Manager":
+    elif page == "🚀 Scan Manager":
         st.title("🚀 Scan Assistant")
         # ... (Scan Logic Hidden for Brevity, implicitly preserved if not overwritten) ...
         # RE-INJECTING SCAN LOGIC as we are inside the condition
@@ -411,116 +519,10 @@ def main():
                     
                     st.success(f"Successfully registered {saved_count} compliance assets! Check 'Compliance Registry'.")
 
-    headers = {"Authorization": f"Bearer {st.session_state['token']}"}
 
-    # ... Pages: Explorer, Connections (Same) ...
-    # Simplified here...
-    
-    if page == "📂 Data Explorer": 
-        # (Same as before)
-        st.title("📂 Data Explorer")
-        conn_options = {c["name"]: c for c in st.session_state["data_connections"] if "Storage" in c["type"]}
-        selected_conn_name = st.selectbox("Select Storage Source", list(conn_options.keys()) if conn_options else [])
-        if selected_conn_name:
-            conn = conn_options[selected_conn_name]
-            # [Local Logic]
-            if conn["type"] == "Local Storage Path":
-                path = Path(conn["details"])
-                with st.expander(f"📤 Upload to {conn['name']}", expanded=True):
-                    up_files = st.file_uploader("Drag & Drop", accept_multiple_files=True)
-                    if up_files:
-                        for f in up_files: save_uploaded_file(f, path); st.toast(f"Saved: {f.name}")
-                        st.rerun()
-                files = list(path.glob("*")) if path.exists() else []
-                st.write(f"### {len(files)} Items in Local Storage")
-                for f in files:
-                    c1, c2 = st.columns([6, 1])
-                    c1.markdown(f"<div class='file-box'>📄 {f.name}</div>", unsafe_allow_html=True)
-                    if c2.button("🗑️", key=f"d_{f.name}"): os.remove(f); st.rerun()
-            # [S3 Logic]
-            elif conn["type"] == "S3 Object Storage":
-                c = conn.get("s3_creds", {}) 
-                if c:
-                    if s3_connector.bucket_name != c.get("bucket"): s3_connector.connect(c["endpoint"], c["access"], c["secret"], c["bucket"])
-                    files = s3_connector.list_files()
-                    st.write(f"### {len(files)} Objects in Bucket")
-                    with st.expander("☁️ Upload", expanded=False):
-                        up_s3 = st.file_uploader("S3 Upload", accept_multiple_files=True)
-                        if up_s3: 
-                            for f in up_s3: s3_connector.upload_file(f, f.name)
-                            st.rerun()
-                    for f in files:
-                         c1, c2 = st.columns([6, 1])
-                         c1.markdown(f"<div class='file-box'>☁️ {f['Key']}</div>", unsafe_allow_html=True)
-                         if c2.button("🗑️", key=f"d_{f['Key']}"): s3_connector.delete_file(f['Key']); st.rerun()
-    elif page == "🗂️ Connections": 
-        # (Same as before)
-        st.title("🗂️ Connection Manager")
-        st.subheader(f"Active Sources ({len(st.session_state['data_connections'])})")
-        
-        conns = st.session_state["data_connections"]
-        for i, conn in enumerate(conns):
-            badge = get_badge_html(conn["type"])
-            display_details = conn.get("details", "")
-            if "s3_creds" in conn: display_details = f"Endpoint={conn['s3_creds']['endpoint']}; Bucket={conn['s3_creds']['bucket']}"
-            
-            with st.container():
-                cols = st.columns([0.7, 0.1, 0.1, 0.1])
-                cols[0].markdown(f"<div class='source-box'><div><strong>{conn['name']}</strong> {badge}<br><small>{display_details}</small></div></div>", unsafe_allow_html=True)
-                if cols[1].button("🔌", key=f"t_{i}"):
-                    if "s3_creds" in conn: 
-                         c = conn["s3_creds"]
-                         suc, msg = s3_connector.connect(c["endpoint"], c["access"], c["secret"], c["bucket"])
-                         if suc: st.toast("Success") 
-                         else: st.error(msg)
-                    elif "Database" in conn["type"]:
-                        suc, msg = db_connector.test_connection('postgresql', conn["details"])
-                        if suc: st.toast("Connected")
-                        else: st.error(msg)
-                    elif "API" in conn["type"]:
-                        suc, msg = db_connector.test_connection('api_get', conn["details"])
-                        if suc: st.toast(msg)
-                        else: st.error(msg)
-                if cols[3].button("🗑️", key=f"d_{i}"):
-                    st.session_state["data_connections"].pop(i)
-                    save_connections(st.session_state["data_connections"])
-                    st.rerun()
 
-        st.divider()
-        with st.expander("➕ Add New Data Source", expanded=False):
-             c1,c2 = st.columns([1,2])
-             ct=c1.selectbox("Type", ["API Endpoint", "PostgreSQL Database", "S3 Object Storage", "Local Storage Path"])
-             cn=c2.text_input("Name")
-             is_val=False; cd=""
-             s3c=None
-             
-             if ct=="Local Storage Path":
-                 p=st.text_input("Path", str(BASE_DIR.absolute()))
-                 if st.button("Add Path"): cd=p; is_val=True
-             elif "Database" in ct:
-                 c1,c2=st.columns(2); h=c1.text_input("Host","localhost"); p=c2.text_input("Port","5432")
-                 u=c1.text_input("User","postgres"); w=c2.text_input("Pass",type="password")
-                 d=st.text_input("DB","postgres")
-                 if st.button("Add DB"): cd=f"postgresql://{u}:{w}@{h}:{p}/{d}"; is_val=True
-             elif ct=="S3 Object Storage":
-                 c1,c2=st.columns(2); e=c1.text_input("Endpoint"); b=c2.text_input("Bucket")
-                 k=c1.text_input("Key"); s=c2.text_input("Secret",type="password")
-                 if st.button("Add S3"): 
-                     if not e.startswith("http"): e="http://"+e
-                     s3c={"endpoint":e,"bucket":b,"access":k,"secret":s}; is_val=True
-             elif ct=="API Endpoint":
-                 u = st.text_input("URL"); 
-                 if st.button("Add API"): cd=u; is_val=True
 
-             if is_val and cn:
-                 nc = {"id":str(time.time()),"name":cn,"type":ct,"details":cd}
-                 if s3c: nc["s3_creds"]=s3c
-                 st.session_state["data_connections"].append(nc)
-                 save_connections(st.session_state["data_connections"])
-                 st.rerun()
-    elif page == "⚙️ Rules Engine": 
-         st.title("⚙️ Rules & Classification Engine")
-         st.caption("Manage detection patterns, sensitivity classification, and ignore lists.")
+    elif page == "⚙️ Rules Engine":         st.caption("Manage detection patterns, sensitivity classification, and ignore lists.")
          
          # Load Rules from API (Single Source of Truth)
          try:
@@ -870,11 +872,6 @@ def main():
                 st.json(graph_data)
     
     # --- Page: Scan Manager (Fixed KeyError) ---
-    if page == "🚀 Scan Manager":
-        st.title("🚀 Scan Assistant")
-        
-        # Mode Selection
-        scan_mode = st.radio("Scan Mode", ["🚀 Quick Scan (Auto)", "🎯 TargetedDB Scan (Query Builder)"], horizontal=True)
         
         if scan_mode == "🚀 Quick Scan (Auto)":
             st.info("Runs an automatic sample scan on all selected sources.")
