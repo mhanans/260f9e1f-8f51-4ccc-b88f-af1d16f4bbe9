@@ -1,30 +1,49 @@
 import sys
 import os
+import json
+from pathlib import Path
 
 # Add parent dir to path
 sys.path.append(os.getcwd())
 
-from connectors.file_scanner import file_scanner
+from engine.unified_scanner import UnifiedScanner
 
-def test_metadata_extraction():
-    print("Testing extraction...")
+def test_unified_scan():
+    print("Testing Unified Context-Aware Scanner...")
     
-    # Test Dummy PDF extraction (mocked content if real PDF not available, but let's try text)
-    # file_scanner handles 'txt' via extract_text fallback to single chunk
+    scanner = UnifiedScanner()
     
-    content = b"This is a test file for PII."
-    chunks = file_scanner.extract_with_metadata(content, "test.txt")
-    print("TXT Chunks:", chunks)
-    assert len(chunks) == 1
-    assert chunks[0]["metadata"]["type"] == "general"
+    # Create valid dummy file
+    filename = "daftar_cif_nasabah_penting.txt"  # Context: 'cif', 'nasabah'
+    content = """
+    List Data:
+    1234567890
+    08123456789
+    """
     
-    # Test Mock PDF (needs fitz, which might fail if not installed or empty bytes)
-    # We just want to check if the method exists and runs without syntax error
+    with open(filename, "w") as f:
+        f.write(content)
+        
     try:
-        chunks_pdf = file_scanner.extract_with_metadata(b"%PDF-1.4...", "doc.pdf")
-        print("PDF Chunks (Empty/Error expected):", chunks_pdf)
-    except Exception as e:
-        print(f"PDF Test Exception: {e}")
+        scanner.scan_file(filename)
+        results = scanner.get_results()
+        
+        print("\nScan Results:")
+        print(json.dumps(results, indent=2))
+        
+        # Assertions
+        assert "ID_CIF" in results, "Failed to identify CIF from context!"
+        assert "ID_PHONE_IDN" in results, "Failed to identify Phone from context!"
+        
+        cif_loc = results["ID_CIF"]["locations"][0]
+        assert cif_loc["file_name"] == filename, "Location capture failed"
+        assert cif_loc["source"] == "file"
+        
+        print("\nSUCCESS: Context aware scanning and object grouping works.")
+        
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)
 
 if __name__ == "__main__":
-    test_metadata_extraction()
+    test_unified_scan()

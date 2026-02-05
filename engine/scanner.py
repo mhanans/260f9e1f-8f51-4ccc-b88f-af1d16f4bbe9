@@ -20,6 +20,28 @@ class CustomPIIScanner:
             if r.name not in useless_recognizers
         ]
 
+        # Add Custom Default Recognizers (Hardcoded for immediate value)
+        # 1. CIF (Customer Information File)
+        cif_pattern = Pattern(name="cif_pattern", regex=r"\b\d{8,14}\b", score=0.3) # Low score without context
+        cif_recognizer = PatternRecognizer(
+            supported_entity="ID_CIF",
+            name="id_cif_recognizer",
+            patterns=[cif_pattern],
+            context=["cif", "customer_id", "cust_id", "nomor_nasabah", "id_pelanggan"]
+        )
+        self.analyzer.registry.add_recognizer(cif_recognizer)
+
+        # 2. Indonesian Phone Number (Improved)
+        # Matches: +628xx, 628xx, 08xx. 
+        phone_pattern = Pattern(name="idn_phone_pattern", regex=r"\b(\+62|62|0)8[1-9][0-9]{6,11}\b", score=0.45)
+        phone_recognizer = PatternRecognizer(
+            supported_entity="ID_PHONE_IDN",
+            name="idn_phone_recognizer",
+            patterns=[phone_pattern],
+            context=["hp", "phone", "mobile", "telp", "wa", "whatsapp", "nomor", "contact"]
+        )
+        self.analyzer.registry.add_recognizer(phone_recognizer)
+
         self.deny_words = []
         self.exclude_entities = []
         
@@ -82,12 +104,19 @@ class CustomPIIScanner:
             r for r in self.analyzer.registry.recognizers if r.name != name
         ]
 
-    def analyze_text(self, text: str) -> list[dict]:
+    def analyze_text(self, text: str, context: list[str] = None) -> list[dict]:
+        """
+        Analyzes text for PII. 
+        Args:
+            text: Text to analyze.
+            context: List of context words (e.g. ['phone', 'mobile', 'filename.pdf']) to boost detection.
+        """
         # 5. Threshold Filter (Score > 0.4)
         results = self.analyzer.analyze(
             text=text, 
             language='en',
-            score_threshold=0.4
+            score_threshold=0.4,
+            context=context
         )
         
         output = []
@@ -107,13 +136,6 @@ class CustomPIIScanner:
             if res.entity_type == "DATE_TIME":
                 if re.match(r"^-?\d{1,3}\.\d+$", extracted_text): continue
 
-            output.append({
-                "type": res.entity_type,
-                "start": res.start,
-                "end": res.end,
-                "score": res.score,
-                "text": extracted_text 
-            })
             output.append({
                 "type": res.entity_type,
                 "start": res.start,
