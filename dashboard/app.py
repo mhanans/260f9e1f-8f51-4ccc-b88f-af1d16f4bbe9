@@ -591,89 +591,89 @@ def main():
                        if res.status_code == 200: st.success("Added!"); st.rerun()
                        else: st.error(res.text)
 
-         # --- TAB 2: Sensitivity Map ---
-         with tab_class:
-             st.subheader("Sensitivity Mapping")
-             st.caption("Map PII Entity Types (e.g., ID_NIK) to Classification Levels (e.g., Spesifik).")
-             
-             # Display current map
-             if sensitivity_rules:
-                 df_sens = pd.DataFrame(sensitivity_rules)
-                 st.dataframe(
-                     df_sens[["entity_type", "pattern"]].rename(columns={"entity_type": "PII Entity", "pattern": "Classification"}),
-                     use_container_width=True
-                 )
-                 
-                 # Delete UI requires ID lookup
-                 opts = {f"{r['entity_type']} -> {r['pattern']}": r['id'] for r in sensitivity_rules}
-                 del_target = st.selectbox("Select Rule to Delete", ["None"] + list(opts.keys()))
-                 if del_target != "None":
-                     if st.button("Remove Selected Mapping"):
-                         requests.delete(f"{API_URL}/config/rules/{opts[del_target]}", headers=headers)
-                         st.rerun()
-                         
-             st.divider()
-             st.write("### Add Classification Rule")
-             with st.form("add_class"):
-                 c1, c2 = st.columns(2)
-                 # Suggest entities from Detection Rules + Default Presidio
-                 known_entities = ["ID_NIK", "ID_NPWP", "PHONE_NUMBER", "EMAIL_ADDRESS", "PERSON", "LOCATION", "DATE_TIME"] 
-                 known_entities += list(set([r['entity_type'] for r in regex_rules]))
-                 
-                 s_entity = c1.selectbox("Entity Type", sorted(list(set(known_entities))))
-                 s_label = c2.text_input("Classification Label", "Spesifik (Confidential)")
-                 
-                 if st.form_submit_button("Map Entity"):
-                     payload = {
-                        "name": f"map_{s_entity}_{int(time.time())}", # unique logic
-                        "rule_type": "sensitivity",
-                        "pattern": s_label, # Storing label in 'pattern' field to reuse model
-                        "entity_type": s_entity,
-                        "score": 1.0, 
-                        "is_active": True
-                     }
-                     res = requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
-                     if res.status_code == 200: st.success("Mapped!"); st.rerun()
-                     else: st.error(res.text)
+        # --- TAB 2: Sensitivity Map ---
+        with tab_class:
+            st.subheader("Sensitivity Mapping")
+            st.caption("Map PII Entity Types (e.g., ID_NIK) to Classification Levels (e.g., Spesifik).")
+            
+            # Display current map
+            if sensitivity_rules:
+                df_sens = pd.DataFrame(sensitivity_rules)
+                st.dataframe(
+                    df_sens[["entity_type", "pattern"]].rename(columns={"entity_type": "PII Entity", "pattern": "Classification"}),
+                    use_container_width=True
+                )
+                
+                # Delete UI requires ID lookup
+                opts = {f"{r['entity_type']} -> {r['pattern']}": r['id'] for r in sensitivity_rules}
+                del_target = st.selectbox("Select Rule to Delete", ["None"] + list(opts.keys()))
+                if del_target != "None":
+                    if st.button("Remove Selected Mapping"):
+                        requests.delete(f"{API_URL}/config/rules/{opts[del_target]}", headers=headers)
+                        st.rerun()
+                        
+            st.divider()
+            st.write("### Add Classification Rule")
+            with st.form("add_class"):
+                c1, c2 = st.columns(2)
+                # Suggest entities from Detection Rules + Default Presidio
+                known_entities = ["ID_NIK", "ID_NPWP", "PHONE_NUMBER", "EMAIL_ADDRESS", "PERSON", "LOCATION", "DATE_TIME"] 
+                known_entities += list(set([r['entity_type'] for r in regex_rules]))
+                
+                s_entity = c1.selectbox("Entity Type", sorted(list(set(known_entities))))
+                s_label = c2.text_input("Classification Label", "Spesifik (Confidential)")
+                
+                if st.form_submit_button("Map Entity"):
+                    payload = {
+                       "name": f"map_{s_entity}_{int(time.time())}", # unique logic
+                       "rule_type": "sensitivity",
+                       "pattern": s_label, # Storing label in 'pattern' field to reuse model
+                       "entity_type": s_entity,
+                       "score": 1.0, 
+                       "is_active": True
+                    }
+                    res = requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
+                    if res.status_code == 200: st.success("Mapped!"); st.rerun()
+                    else: st.error(res.text)
 
-         # --- TAB 3: Ignore Lists ---
-         with tab_ignore:
-             st.subheader("🚫 False Positive Management")
-             
-             c1, c2 = st.columns(2)
-             
-             with c1:
-                 st.write("#### Deny List (Strings)")
-                 st.caption("Exact text to always ignore (e.g., table headers).")
-                 for r in deny_rules:
-                     col_a, col_b = st.columns([4,1])
-                     col_a.code(r["pattern"])
-                     if col_b.button("❌", key=f"del_d_{r['id']}"):
-                         requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
-                         st.rerun()
-                 
-                 new_deny = st.text_input("Add String to Ignore")
-                 if st.button("Add to Deny List"):
-                     if new_deny:
-                         payload = {"name": f"deny_{int(time.time())}", "rule_type": "deny_list", "pattern": new_deny, "entity_type": "DENY", "score":1.0}
-                         requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
-                         st.rerun()
-             
-             with c2:
-                 st.write("#### Exclude Entities")
-                 st.caption("PII Types to completely disable scanning for.")
-                 for r in exclude_rules:
-                     col_a, col_b = st.columns([4,1])
-                     col_a.code(r["entity_type"]) # Assuming stored in entity_type or pattern
-                     if col_b.button("❌", key=f"del_e_{r['id']}"):
-                         requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
-                         st.rerun()
-                 
-                 new_ex = st.selectbox("Select Entity to Disable", ["DATE_TIME", "NRP", "LOCATION", "PERSON"])
-                 if st.button("Disable Entity"):
-                     payload = {"name": f"ex_{new_ex}_{int(time.time())}", "rule_type": "exclude_entity", "pattern": "IGNORE", "entity_type": new_ex, "score":1.0}
-                     requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
-                     st.rerun()
+        # --- TAB 3: Ignore Lists ---
+        with tab_ignore:
+            st.subheader("🚫 False Positive Management")
+            
+            c1, c2 = st.columns(2)
+            
+            with c1:
+                st.write("#### Deny List (Strings)")
+                st.caption("Exact text to always ignore (e.g., table headers).")
+                for r in deny_rules:
+                    col_a, col_b = st.columns([4,1])
+                    col_a.code(r["pattern"])
+                    if col_b.button("❌", key=f"del_d_{r['id']}"):
+                        requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
+                        st.rerun()
+                
+                new_deny = st.text_input("Add String to Ignore")
+                if st.button("Add to Deny List"):
+                    if new_deny:
+                        payload = {"name": f"deny_{int(time.time())}", "rule_type": "deny_list", "pattern": new_deny, "entity_type": "DENY", "score":1.0}
+                        requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
+                        st.rerun()
+            
+            with c2:
+                st.write("#### Exclude Entities")
+                st.caption("PII Types to completely disable scanning for.")
+                for r in exclude_rules:
+                    col_a, col_b = st.columns([4,1])
+                    col_a.code(r["entity_type"]) # Assuming stored in entity_type or pattern
+                    if col_b.button("❌", key=f"del_e_{r['id']}"):
+                        requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
+                        st.rerun()
+                
+                new_ex = st.selectbox("Select Entity to Disable", ["DATE_TIME", "NRP", "LOCATION", "PERSON"])
+                if st.button("Disable Entity"):
+                    payload = {"name": f"ex_{new_ex}_{int(time.time())}", "rule_type": "exclude_entity", "pattern": "IGNORE", "entity_type": new_ex, "score":1.0}
+                    requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
+                    st.rerun()
 
     elif page == "📊 Dashboard": 
         # (Same as before)
