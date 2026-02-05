@@ -522,72 +522,74 @@ def main():
 
 
 
-    elif page == "⚙️ Rules Engine":         st.caption("Manage detection patterns, sensitivity classification, and ignore lists.")
+    elif page == "⚙️ Rules Engine":
+        st.title("⚙️ Rules Engine")
+        st.caption("Manage detection patterns, sensitivity classification, and ignore lists.")
          
-         # Load Rules from API (Single Source of Truth)
-         try:
-             rules_res = requests.get(f"{API_URL}/config/rules", headers=headers)
-             if rules_res.status_code == 200:
-                 all_rules = rules_res.json()
-             else:
-                 all_rules = []
-                 st.error("Failed to load rules from API")
-         except:
-             all_rules = []
+        # Load Rules from API (Single Source of Truth)
+        try:
+            rules_res = requests.get(f"{API_URL}/config/rules", headers=headers)
+            if rules_res.status_code == 200:
+                all_rules = rules_res.json()
+            else:
+                all_rules = []
+                st.error("Failed to load rules from API")
+        except:
+            all_rules = []
          
-         # Categorize Rules
-         regex_rules = [r for r in all_rules if r["rule_type"] == "regex"]
-         deny_rules = [r for r in all_rules if r["rule_type"] == "deny_list"] # String literals to ignore
-         exclude_rules = [r for r in all_rules if r["rule_type"] == "exclude_entity"] # Whole entity types to ignore
-         sensitivity_rules = [r for r in all_rules if r["rule_type"] == "sensitivity"] # Entity -> Sensitivity Map
+        # Categorize Rules
+        regex_rules = [r for r in all_rules if r["rule_type"] == "regex"]
+        deny_rules = [r for r in all_rules if r["rule_type"] == "deny_list"] # String literals to ignore
+        exclude_rules = [r for r in all_rules if r["rule_type"] == "exclude_entity"] # Whole entity types to ignore
+        sensitivity_rules = [r for r in all_rules if r["rule_type"] == "sensitivity"] # Entity -> Sensitivity Map
          
-         tab_detect, tab_class, tab_ignore = st.tabs(["🕵️ Detection Rules (Regex)", "🏷️ Sensitivity & Tags", "🚫 Ignore Lists"])
+        tab_detect, tab_class, tab_ignore = st.tabs(["🕵️ Detection Rules (Regex)", "🏷️ Sensitivity & Tags", "🚫 Ignore Lists"])
          
-         # --- TAB 1: Detection Rules ---
-         with tab_detect:
-             st.subheader("Custom Regex Recognizers")
+        # --- TAB 1: Detection Rules ---
+        with tab_detect:
+            st.subheader("Custom Regex Recognizers")
              
-             for r in regex_rules:
-                 with st.expander(f"🧩 {r['entity_type']} ({r['name']})", expanded=False):
-                     c1, c2, c3 = st.columns([3, 1, 1])
-                     # We can't easily edit via API PUT without implemented update endpoint for all fields, 
-                     # but we can toggle active state.
-                     st.text_input("Regex", value=r["pattern"], disabled=True, key=f"d_rex_{r['id']}")
-                     st.slider("Score", 0.0, 1.0, r["score"], disabled=True, key=f"d_score_{r['id']}")
+            for r in regex_rules:
+                with st.expander(f"🧩 {r['entity_type']} ({r['name']})", expanded=False):
+                    c1, c2, c3 = st.columns([3, 1, 1])
+                    # We can't easily edit via API PUT without implemented update endpoint for all fields, 
+                    # but we can toggle active state.
+                    st.text_input("Regex", value=r["pattern"], disabled=True, key=f"d_rex_{r['id']}")
+                    st.slider("Score", 0.0, 1.0, r["score"], disabled=True, key=f"d_score_{r['id']}")
                      
-                     is_active = st.toggle("Active", value=r["is_active"], key=f"act_{r['id']}")
-                     if is_active != r["is_active"]:
-                         requests.put(f"{API_URL}/config/rules/{r['id']}", headers=headers, params={"is_active": is_active})
-                         st.rerun()
+                    is_active = st.toggle("Active", value=r["is_active"], key=f"act_{r['id']}")
+                    if is_active != r["is_active"]:
+                        requests.put(f"{API_URL}/config/rules/{r['id']}", headers=headers, params={"is_active": is_active})
+                        st.rerun()
                          
-                     if st.button("🗑️ Delete", key=f"del_{r['id']}"):
-                         requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
-                         st.rerun()
+                    if st.button("🗑️ Delete", key=f"del_{r['id']}"):
+                        requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
+                        st.rerun()
 
-             st.divider()
-             st.write("### Add New Regex Rule")
-             with st.form("add_regex"):
-                c1, c2 = st.columns(2)
-                new_name = c1.text_input("Rule Name (Unique)", placeholder="my_custom_rule")
-                new_entity = c2.text_input("Entity Tag", placeholder="ID_CUSTOM").upper()
-                new_pattern = st.text_input("Regex Pattern", placeholder=r"\b\d{5}\b")
-                new_score = st.slider("Confidence Score", 0.1, 1.0, 0.5)
-                new_ctx = st.text_input("Context Words (comma sep)", placeholder="header, label")
-                
-                if st.form_submit_button("Add Detection Rule"):
-                    if new_name and new_entity and new_pattern:
-                        payload = {
-                            "name": new_name,
-                            "rule_type": "regex",
-                            "pattern": new_pattern,
-                            "score": new_score,
-                            "entity_type": new_entity,
-                            "context_keywords": json.dumps([x.strip() for x in new_ctx.split(",") if x.strip()]),
-                            "is_active": True
-                        }
-                        res = requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
-                        if res.status_code == 200: st.success("Added!"); st.rerun()
-                        else: st.error(res.text)
+            st.divider()
+            st.write("### Add New Regex Rule")
+            with st.form("add_regex"):
+               c1, c2 = st.columns(2)
+               new_name = c1.text_input("Rule Name (Unique)", placeholder="my_custom_rule")
+               new_entity = c2.text_input("Entity Tag", placeholder="ID_CUSTOM").upper()
+               new_pattern = st.text_input("Regex Pattern", placeholder=r"\b\d{5}\b")
+               new_score = st.slider("Confidence Score", 0.1, 1.0, 0.5)
+               new_ctx = st.text_input("Context Words (comma sep)", placeholder="header, label")
+               
+               if st.form_submit_button("Add Detection Rule"):
+                   if new_name and new_entity and new_pattern:
+                       payload = {
+                           "name": new_name,
+                           "rule_type": "regex",
+                           "pattern": new_pattern,
+                           "score": new_score,
+                           "entity_type": new_entity,
+                           "context_keywords": json.dumps([x.strip() for x in new_ctx.split(",") if x.strip()]),
+                           "is_active": True
+                       }
+                       res = requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
+                       if res.status_code == 200: st.success("Added!"); st.rerun()
+                       else: st.error(res.text)
 
          # --- TAB 2: Sensitivity Map ---
          with tab_class:
