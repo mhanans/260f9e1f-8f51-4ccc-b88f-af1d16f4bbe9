@@ -166,9 +166,21 @@ _person_invalid_particles = [
     "oleh", "tentang", "seperti", "yaitu", "yakni", "dalam"
 ]
 
+# --- DYNAMIC GENERATION WITH DUPLICATE PROTECTION ---
+
+seen_names = set()
+
+# 1. False Positives
 for word in set(_person_false_positives):
+    safe_suffix = word.replace('.', '').replace(' ', '_')
+    rule_name = f"fp_person_{safe_suffix}"
+    
+    if rule_name in seen_names:
+        continue
+    seen_names.add(rule_name)
+
     DEFAULT_INDO_RULES.append({
-        "name": f"fp_person_{word.replace('.', '')}",
+        "name": rule_name,
         "entity_type": "PERSON_FILTER",
         "rule_type": "false_positive_person",
         "pattern": word,
@@ -176,9 +188,17 @@ for word in set(_person_false_positives):
         "is_active": True
     })
 
+# 2. Negative Contexts
 for word in set(_person_negative_contexts):
+    safe_suffix = word.replace('.', '').replace(' ', '_')
+    rule_name = f"neg_ctx_{safe_suffix}"
+
+    if rule_name in seen_names:
+        continue
+    seen_names.add(rule_name)
+
     DEFAULT_INDO_RULES.append({
-        "name": f"neg_ctx_{word.replace('.', '')}",
+        "name": rule_name,
         "entity_type": "PERSON_FILTER",
         "rule_type": "negative_context_person",
         "pattern": word,
@@ -186,12 +206,48 @@ for word in set(_person_negative_contexts):
         "is_active": True
     })
 
+# 3. Invalid Particles
 for word in set(_person_invalid_particles):
+    # Particles are simple words usually safe, but good practice
+    rule_name = f"inv_part_{word}"
+    
+    if rule_name in seen_names:
+        continue
+    seen_names.add(rule_name)
+
     DEFAULT_INDO_RULES.append({
-        "name": f"inv_part_{word}",
+        "name": rule_name,
         "entity_type": "PERSON_FILTER",
         "rule_type": "invalid_particle_person",
         "pattern": word,
+        "score": 1.0,
+        "is_active": True
+    })
+
+# --- DEFAULT SENSITIVITY MAPPINGS ---
+# Maps PII Entity Types to Classification Levels (Spesifik vs Umum)
+_sensitivity_map = {
+    "ID_KTP": "Spesifik",
+    "ID_KK": "Spesifik", 
+    "ID_NPWP": "Spesifik",
+    "ID_BPJS": "Spesifik",
+    "CREDIT_CARD": "Spesifik",
+    "ID_BANK_ACCOUNT": "Spesifik",
+    "ID_PHONE_NUMBER": "Spesifik",
+    "ID_EMAIL": "Spesifik",
+    "ID_SOCIAL_MEDIA": "Umum",
+    "PERSON": "Spesifik",
+    "LOCATION": "Umum",
+    "DATE_TIME": "Umum",
+    "NRP": "Spesifik"
+}
+
+for entity, sense in _sensitivity_map.items():
+    DEFAULT_INDO_RULES.append({
+        "name": f"sense_{entity.lower()}",
+        "entity_type": entity,
+        "rule_type": "sensitivity",
+        "pattern": sense, # Storing level in pattern field
         "score": 1.0,
         "is_active": True
     })
