@@ -34,16 +34,24 @@ def on_startup():
     # Seed Default Rules if DB is empty
     try:
         with Session(engine) as session:
-            existing_rules = session.exec(select(ScanRule)).first()
-            if not existing_rules:
-                print("Seeding database with Default Indonesian Rules...")
-                for rule_dict in DEFAULT_INDO_RULES:
+            # Check for existing rules to perform incremental seeding
+            existing_rules = session.exec(select(ScanRule.name)).all()
+            existing_names = set(existing_rules)
+            
+            print(f"Checking {len(DEFAULT_INDO_RULES)} default rules against {len(existing_names)} existing rules...")
+            
+            added_count = 0
+            for rule_dict in DEFAULT_INDO_RULES:
+                if rule_dict["name"] not in existing_names:
                     rule = ScanRule(**rule_dict)
                     session.add(rule)
+                    added_count += 1
+            
+            if added_count > 0:
                 session.commit()
-                print("Seeding complete.")
+                print(f"Seeding complete. Added {added_count} new rules.")
             else:
-                print("Database already contains rules. Skipping seed.")
+                print("All default rules already exist.")
                 
         # Force scanner to reload from DB now that seeding is done
         scanner_engine.reload_rules()
