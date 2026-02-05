@@ -117,7 +117,13 @@ class CustomPIIScanner:
             "ketua", "sekretaris", "bendahara", "anggota", "pimpinan",
             "kepada", "yth", "dari", "hal", "lampiran", "perihal", "tembusan",
             "catatan", "keterangan", "status", "aktif", "nonaktif", "valid",
-            "bapak", "ibu", "sdr", "sdri", "saudara", "pemohon", "penerima"
+            "bapak", "ibu", "sdr", "sdri", "saudara", "pemohon", "penerima",
+            
+            # Generic Terms / Labels often mistaken for Names
+            "jenis", "kelamin", "laki-laki", "perempuan", "pria", "wanita", # Gender
+            "tempat", "lahir", "tanggal", "waktu", # Place/Time
+            "nrp", "nik", "nis", "nip", "ktp", "sim", "npwp", # ID Names
+            "nomor", "no", "kartu", "keluarga", "kk" # Doc Names
         }
         
         # Context that INVALIDATES a Person match (e.g. "Jalan Sudirman" -> Sudirman is not a person here)
@@ -127,7 +133,13 @@ class CustomPIIScanner:
             "pt", "cv", "perusahaan", "company", # Org
             "kabupaten", "kota", "provinsi", "kec.", "kel.", # Administrative
             "status", "keterangan", "note", "desc", "perihal", "hal", # Random headers
-            "tanggal", "date", "hari" # Time headers
+            "tanggal", "date", "hari", # Time headers
+            
+            # --- NEW ADDITIONS BASED ON FEEDBACK ---
+            "jenis", "kelamin", # "Jenis Kelamin" header often followed by "Laki-laki" which might be detected as name
+            "tempat", "lahir", # "Tempat Lahir" header
+            "nrp", "nis", "nip", "nik", # ID Headers
+            "nomor", "ktp", "kk", "npwp", "kartu", "keluarga" # Document Headers
         }
 
         # Context that VALIDATES a Person match (Strong indicators)
@@ -163,29 +175,55 @@ class CustomPIIScanner:
 
             # --- SMART FILTERING ---
             
+            # --- SMART FILTERING ---
+            
             # 1. Filter PERSON False Positives
             if res.entity_type == "PERSON":
-                # A. Negative Context Lookbehind (e.g. "Jalan Name")
-                # Look back ~30 chars
+                # Rule A: Capitalization Check
+                # Names in formal docs almost ALWAYS start with Uppercase. 
+                # If it starts with lower eventhough Spacy found it, it's likely a common word in the middle of a sentence.
+                # (Exception: if the whole extracted text is UPPERCASE, we keep it)
+                if extracted_text and extracted_text[0].islower():
+                     continue
+
+                # Rule B: Invalid Particle Check
+                # If these words appear INSIDE the detected name, it is definitely NOT a name.
+                # e.g. "dan tidak", "yang perlu", "ke dalam"
+                INVALID_NAME_PARTICLES = {
+                    "dan", "yang", "atau", "untuk", "adalah", "ini", "itu", "dengan",
+                    "di", "ke", "dari", "pada", "tersebut", "bisa", "akan", "telah",
+                    "sebagai", "jika", "maka", "tidak", "belum", "sudah", "lagi",
+                    "oleh", "tentang", "seperti", "yaitu", "yakni", "dalam"
+                }
+                extracted_words = set(extracted_lower.split())
+                if not extracted_words.isdisjoint(INVALID_NAME_PARTICLES):
+                    continue
+
+                # Rule C: Common Header/False Positive Check (Startswith)
+                # If the detected text STARTS with a blacklist word, reject it.
+                # e.g. "Nomor Kartu Keluarga" (Starts with 'nomor') -> Reject
+                # e.g. "Tempat Lahir" (Starts with 'tempat') -> Reject
+                if any(extracted_lower.startswith(x) for x in COMMON_ID_FALSE_POSITIVES):
+                    continue
+
+                # Rule D: Negative Context Lookbehind (e.g. "Jalan Name")
+                # Look back ~35 chars
                 preceding_text = text[max(0, res.start - 35) : res.start].lower()
-                
-                # If ANY negative context word is found immediately before, DROP IT.
-                # We split by words to avoid partial matches (e.g. "ban" in "urban")
                 preceding_words = set(re.findall(r'\w+', preceding_text))
+                
                 if not preceding_words.isdisjoint(PERSON_NEGATIVE_CONTEXTS):
                     # Found a negative context word, so text is likely NOT a person
                     continue
 
-                # B. Positive Context Boost (Optional: could verify low scores)
-                # If positive context exists, we highly trust it, even if it's in the blacklist (rare but possible)
+                # Rule E: Positive Context Boost 
+                # If positive context exists, we trust it more, BUT rules A/B/C still apply first (sanity checks).
                 if not preceding_words.isdisjoint(PERSON_POSITIVE_CONTEXTS):
-                    # It has a strong indicator (e.g. "Bpk. Andi"), so keep it!
                     pass 
                 else:
-                    # C. Standard Blacklist (Only run if NO positive context found)
-                    if extracted_lower in COMMON_ID_FALSE_POSITIVES: continue
+                    # Rule F: Standard Sanity Checks
                     if any(char.isdigit() for char in extracted_text): continue
                     if len(extracted_text) < 3: continue
+                    if len(extracted_words) > 5: continue # Names rarely > 5 words
                 
             # 2. Skip common False Positives for DATE_TIME that look like coordinates or just numbers
             if res.entity_type == "DATE_TIME":
