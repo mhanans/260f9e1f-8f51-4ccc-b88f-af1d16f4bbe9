@@ -20,6 +20,37 @@ app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Logs"])
 app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance & Detected Data"])
 
 
+@app.on_event("startup")
+def on_startup():
+    from sqlmodel import Session, select
+    from api.db import engine, create_db_and_tables
+    from api.models import ScanRule
+    from engine.default_rules import DEFAULT_INDO_RULES
+    from engine.scanner import scanner_engine
+    
+    # Ensure tables exist (redundant if using alembic/migration tools, but good for dev)
+    create_db_and_tables()
+    
+    # Seed Default Rules if DB is empty
+    try:
+        with Session(engine) as session:
+            existing_rules = session.exec(select(ScanRule)).first()
+            if not existing_rules:
+                print("Seeding database with Default Indonesian Rules...")
+                for rule_dict in DEFAULT_INDO_RULES:
+                    rule = ScanRule(**rule_dict)
+                    session.add(rule)
+                session.commit()
+                print("Seeding complete.")
+            else:
+                print("Database already contains rules. Skipping seed.")
+                
+        # Force scanner to reload from DB now that seeding is done
+        scanner_engine.reload_rules()
+        
+    except Exception as e:
+        print(f"Startup seeding failed: {e}")
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the Data Discovery System API"}

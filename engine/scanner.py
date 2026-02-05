@@ -4,8 +4,6 @@ import re
 import json
 from pathlib import Path
 
-CONFIG_PATH = Path("config/scanner_rules.json")
-
 class CustomPIIScanner:
     def __init__(self):
         # Initialize Presidio Analyzer
@@ -20,46 +18,25 @@ class CustomPIIScanner:
             if r.name not in useless_recognizers
         ]
 
-        # Add Custom Default Recognizers (Hardcoded for immediate value)
-        # 1. CIF (Customer Information File)
-        cif_pattern = Pattern(name="cif_pattern", regex=r"\b\d{8,14}\b", score=0.3) # Low score without context
-        cif_recognizer = PatternRecognizer(
-            supported_entity="ID_CIF",
-            name="id_cif_recognizer",
-            patterns=[cif_pattern],
-            context=["cif", "customer_id", "cust_id", "nomor_nasabah", "id_pelanggan"]
-        )
-        self.analyzer.registry.add_recognizer(cif_recognizer)
-
-        # 2. Indonesian Phone Number (Improved)
-        # Matches: +628xx, 628xx, 08xx. 
-        phone_pattern = Pattern(name="idn_phone_pattern", regex=r"\b(\+62|62|0)8[1-9][0-9]{6,11}\b", score=0.45)
-        phone_recognizer = PatternRecognizer(
-            supported_entity="ID_PHONE_IDN",
-            name="idn_phone_recognizer",
-            patterns=[phone_pattern],
-            context=["hp", "phone", "mobile", "telp", "wa", "whatsapp", "nomor", "contact"]
-        )
-        self.analyzer.registry.add_recognizer(phone_recognizer)
-
         self.deny_words = []
         self.exclude_entities = []
         
-        # Load Dynamic Rules
+        # Load Dynamic Rules (DB Only as Source of Truth)
+        # Seeding is handled by main.py on startup
         self.reload_rules()
 
     def reload_rules(self):
-        """Loads Custom Recognizers and Deny List from Database (ScanRule table)."""
+        """Loads Custom Recognizers and Deny List from Database."""
         try:
-            # Need to import here to avoid circular init issues if possible, 
-            # or ensure api.models is ready.
             from sqlmodel import Session, select
             from api.db import engine
             from api.models import ScanRule
             
             with Session(engine) as session:
                 rules = session.exec(select(ScanRule).where(ScanRule.is_active == True)).all()
-                
+                if not rules:
+                    return 
+
                 # Separation
                 deny_rules = [r.pattern for r in rules if r.rule_type == "deny_list"]
                 regex_rules = [r for r in rules if r.rule_type == "regex"]
@@ -72,7 +49,7 @@ class CustomPIIScanner:
                     deny_recognizer = PatternRecognizer(
                         supported_entity="DENY_LIST",
                         name="indonesian_header_deny",
-                        deny_list=self.deny_words
+                        deny_list=list(set(self.deny_words))
                     )
                     self.analyzer.registry.add_recognizer(deny_recognizer)
                 
@@ -80,12 +57,17 @@ class CustomPIIScanner:
                 for c in regex_rules:
                     self._remove_recognizer(c.name)
                     
+                    try:
+                        context_list = json.loads(c.context_keywords) if c.context_keywords else []
+                    except:
+                        context_list = []
+
                     pat = Pattern(name=f"{c.name}_pattern", regex=c.pattern, score=c.score)
                     rec = PatternRecognizer(
                         supported_entity=c.entity_type, 
                         name=c.name,
                         patterns=[pat],
-                        context=json.loads(c.context_keywords) if c.context_keywords else []
+                        context=context_list
                     )
                     self.analyzer.registry.add_recognizer(rec)
                     
@@ -93,10 +75,7 @@ class CustomPIIScanner:
                 self.exclude_entities = exclude_rules
                 
         except Exception as e:
-            # Fallback to JSON if DB fails (init time) or just log error
             print(f"Error loading scanner rules from DB: {e}")
-            # Try loading from file as backup? 
-            # Keeping original JSON load logic as backup could be wise but requested to move to managed.
             pass
 
     def _remove_recognizer(self, name):
