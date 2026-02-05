@@ -567,15 +567,77 @@ def main():
                         st.rerun()
 
             st.divider()
-            st.write("### Add New Regex Rule")
+            st.divider()
+            st.write("### 🏗️ Regex Builder Laboratory")
+            
+            # Mode Selection
+            builder_mode = st.radio("Mode", ["Visual Builder (No Code)", "Expert (Raw Regex)"], horizontal=True)
+            
             with st.form("add_regex"):
                c1, c2 = st.columns(2)
-               new_name = c1.text_input("Rule Name (Unique)", placeholder="my_custom_rule")
-               new_entity = c2.text_input("Entity Tag", placeholder="ID_CUSTOM").upper()
-               new_pattern = st.text_input("Regex Pattern", placeholder=r"\b\d{5}\b")
-               new_score = st.slider("Confidence Score", 0.1, 1.0, 0.5)
-               new_ctx = st.text_input("Context Words (comma sep)", placeholder="header, label")
+               new_name = c1.text_input("Rule Name (Unique)", placeholder="e.g. Employee_ID_V2")
+               new_entity = c2.text_input("Entity Tag", placeholder="ID_EMPLOYEE").upper()
+               new_score = st.slider("Confidence Score", 0.1, 1.0, 0.6)
+               new_ctx = st.text_input("Context Words (comma sep)", placeholder="header, label, id")
                
+               generated_pattern = ""
+               
+               if builder_mode == "Visual Builder (No Code)":
+                   st.markdown("#### 🛠️ Pattern Constructor")
+                   
+                   col_b1, col_b2, col_b3 = st.columns(3)
+                   prefix = col_b1.text_input("Starts with (Prefix)", placeholder="EMP-")
+                   middle = col_b2.selectbox("Followed by", ["Any Digits", "Any Letters", "Exact Word"], index=0)
+                   middle_val = ""
+                   if middle == "Exact Word":
+                       middle_val = col_b2.text_input("Word", placeholder="HR")
+                   
+                   count = col_b3.number_input("Count / Length", min_value=1, value=5)
+                   
+                   suffix = st.text_input("Ends with (Optional)", placeholder="")
+                   
+                   # Logic to build Regex
+                   # Very basic implementation for demo
+                   pat_parts = []
+                   if prefix: 
+                       pat_parts.append(re.escape(prefix))
+                   
+                   if middle == "Any Digits":
+                       pat_parts.append(f"\\d{{{count}}}")
+                   elif middle == "Any Letters":
+                       pat_parts.append(f"[a-zA-Z]{{{count}}}")
+                   elif middle == "Exact Word":
+                       pat_parts.append(re.escape(middle_val))
+                       
+                   if suffix:
+                       pat_parts.append(re.escape(suffix))
+                       
+                   # Construct
+                   if pat_parts:
+                       generated_pattern = r"\b" + "".join(pat_parts) + r"\b"
+                   else:
+                       generated_pattern = ""
+                       
+                   st.info(f"Generated Regex: `{generated_pattern}`")
+                   new_pattern = generated_pattern
+                   
+               else:
+                   new_pattern = st.text_input("Regex Pattern", placeholder=r"\b\d{5}\b")
+
+               # --- Live Preview Safety Net ---
+               st.markdown("#### 🧪 Live Validation")
+               sample_text = st.text_area("Test your pattern here...", "Sample: EMP-12345 sent by EMP-99999", height=80)
+               
+               if new_pattern:
+                   try:
+                       matches = re.findall(new_pattern, sample_text)
+                       if matches:
+                           st.success(f"✅ Found {len(matches)} matches: {matches}")
+                       else:
+                           st.warning("⚠️ No matches found in sample text.")
+                   except re.error as e:
+                       st.error(f"❌ Invalid Regex: {e}")
+
                if st.form_submit_button("Add Detection Rule"):
                    if new_name and new_entity and new_pattern:
                        payload = {
