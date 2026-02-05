@@ -67,7 +67,8 @@ class CustomPIIScanner:
                         supported_entity=c.entity_type, 
                         name=c.name,
                         patterns=[pat],
-                        context=context_list
+                        context=context_list,
+                        supported_language=None # Apply to ALL languages (EN, ID, etc.)
                     )
                     self.analyzer.registry.add_recognizer(rec)
                     
@@ -90,7 +91,55 @@ class CustomPIIScanner:
             text: Text to analyze.
             context: List of context words (e.g. ['phone', 'mobile', 'filename.pdf']) to boost detection.
         """
+        # Common Indonesian words often detected as PERSON by Spacy (False Positives)
+        COMMON_ID_FALSE_POSITIVES = {
+            # Administrative / Address
+            "jalan", "jl", "jl.", "gang", "gg", "rt", "rw", "no", "nomor", 
+            "kecamatan", "kelurahan", "kabupaten", "kota", "provinsi", 
+            "blok", "lantai", "gedung", "menara", "kode", "pos", "komplek",
+            
+            # Business / Corporate
+            "pt", "cv", "persero", "tbk", "ud", "bank", "kcp", "kc", "unit", 
+            "kantor", "cabang", "pusat", "divisi", "bagian", "departemen",
+            "direktur", "manager", "staf", "admin", "hrd", "pic", "cs",
+            "pembayaran", "transaksi", "saldo", "total", "rupiah", "transfer",
+            "rekening", "biaya", "tagihan", "faktur", "invoice", "kwitansi",
+            "po", "pr", "order", "qty", "amount", "harga", "diskon",
+            
+            # Time / Calendar
+            "tanggal", "bulan", "tahun", "jam", "pukul", "waktu", "hari",
+            "senin", "selasa", "rabu", "kamis", "jumat", "sabtu", "minggu",
+            "januari", "februari", "maret", "april", "mei", "juni", 
+            "juli", "agustus", "september", "oktober", "november", "desember",
+            
+            # Correspondence / Formal
+            "hormat", "kami", "kita", "saya", "anda", "beliau", "mereka",
+            "ketua", "sekretaris", "bendahara", "anggota", "pimpinan",
+            "kepada", "yth", "dari", "hal", "lampiran", "perihal", "tembusan",
+            "catatan", "keterangan", "status", "aktif", "nonaktif", "valid",
+            "bapak", "ibu", "sdr", "sdri", "saudara", "pemohon", "penerima"
+        }
+        
+        # Context that INVALIDATES a Person match (e.g. "Jalan Sudirman" -> Sudirman is not a person here)
+        PERSON_NEGATIVE_CONTEXTS = {
+            "jalan", "jl", "jl.", "loc", "lokasi", "alamat", "address", # Address indicators
+            "bank", "rekening", "atm", "bca", "bri", "mandiri", "bni", # Finance
+            "pt", "cv", "perusahaan", "company", # Org
+            "kabupaten", "kota", "provinsi", "kec.", "kel.", # Administrative
+            "status", "keterangan", "note", "desc", "perihal", "hal", # Random headers
+            "tanggal", "date", "hari" # Time headers
+        }
+
+        # Context that VALIDATES a Person match (Strong indicators)
+        PERSON_POSITIVE_CONTEXTS = {
+            "nama", "name", "customer", "karyawan", "pegawai", "staff",
+            "pic", "penanggung", "jawab", "oleh", "by",
+            "bapak", "ibu", "bpk", "sdr", "sdri", "mr", "mrs", "ms", "miss"
+        }
+
         # 5. Threshold Filter (Score > 0.4)
+        # Note: We use 'en' as the pipeline language to leverage the English NLP model for context/NER.
+        # Custom Indonesian recognizers are registered with supported_language=None, so they run alongside English rules.
         results = self.analyzer.analyze(
             text=text, 
             language='en',
@@ -106,14 +155,42 @@ class CustomPIIScanner:
             if res.entity_type in self.exclude_entities: continue
 
             extracted_text = text[res.start:res.end]
+            extracted_lower = extracted_text.lower().replace(".", "") # simple clean
             
             # Double check deny list for strictness
             if extracted_text.lower() in [x.lower() for x in self.deny_words]: 
                  continue
 
-            # Skip common False Positives for DATE_TIME that look like coordinates
+            # --- SMART FILTERING ---
+            
+            # 1. Filter PERSON False Positives
+            if res.entity_type == "PERSON":
+                # A. Negative Context Lookbehind (e.g. "Jalan Name")
+                # Look back ~30 chars
+                preceding_text = text[max(0, res.start - 35) : res.start].lower()
+                
+                # If ANY negative context word is found immediately before, DROP IT.
+                # We split by words to avoid partial matches (e.g. "ban" in "urban")
+                preceding_words = set(re.findall(r'\w+', preceding_text))
+                if not preceding_words.isdisjoint(PERSON_NEGATIVE_CONTEXTS):
+                    # Found a negative context word, so text is likely NOT a person
+                    continue
+
+                # B. Positive Context Boost (Optional: could verify low scores)
+                # If positive context exists, we highly trust it, even if it's in the blacklist (rare but possible)
+                if not preceding_words.isdisjoint(PERSON_POSITIVE_CONTEXTS):
+                    # It has a strong indicator (e.g. "Bpk. Andi"), so keep it!
+                    pass 
+                else:
+                    # C. Standard Blacklist (Only run if NO positive context found)
+                    if extracted_lower in COMMON_ID_FALSE_POSITIVES: continue
+                    if any(char.isdigit() for char in extracted_text): continue
+                    if len(extracted_text) < 3: continue
+                
+            # 2. Skip common False Positives for DATE_TIME that look like coordinates or just numbers
             if res.entity_type == "DATE_TIME":
                 if re.match(r"^-?\d{1,3}\.\d+$", extracted_text): continue
+                if extracted_text.isdigit(): continue # Just a year or number is rarely PII alone
 
             output.append({
                 "type": res.entity_type,
