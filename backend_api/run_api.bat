@@ -13,9 +13,13 @@ echo Installing dependencies...
 pip install -r requirements.txt
 
 IF NOT EXIST .env (
+    echo ----------------------------------------------------------------
     echo Creating .env from .env.example...
     copy .env.example .env
-    echo !! Please edit .env with your database credentials !!
+    echo !!! IMPORTANT: A new .env file has been created. !!!
+    echo !!! Please edit .env with your database credentials before proceeding. !!!
+    echo ----------------------------------------------------------------
+    pause
 )
 
 echo --- Starting API Server ---
