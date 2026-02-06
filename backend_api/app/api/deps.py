@@ -7,7 +7,6 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.db import get_session
-from app.core.security import ALGORITHM
 from app.models.all_models import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/token")

@@ -33,9 +33,12 @@ class Settings(BaseSettings):
     AWS_REGION: str = "us-east-1"
     S3_BUCKET_NAME: str = ""
 
+    # Presidio
+    PRESIDIO_ANALYZER_SCORE_THRESHOLD: float = 0.5
+
     # Logging
     LOG_LEVEL: str = "INFO"
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
 settings = Settings()
