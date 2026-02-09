@@ -111,3 +111,46 @@ def get_scan_history(config_id: int, session: Session = Depends(get_session), cu
         clean_results.append(d)
         
     return clean_results
+
+# --- Metadata Scanning API ---
+
+from app.connectors.db_connector import db_connector
+from app.scheduler.worker import scan_datasource_task
+
+class MetadataPreviewRequest(BaseModel):
+    target_type: str
+    connection_string: str
+
+@router.post("/metadata/preview")
+def preview_metadata(request: MetadataPreviewRequest, current_user: User = Depends(get_current_user)):
+    """
+    Synchronously fetches metadata (tables, columns, buckets) from the target.
+    Useful for previewing what will be scanned.
+    """
+    results = []
+    try:
+        # Map target_type to connector type
+        type_key = request.target_type
+        if type_key == 'database': type_key = 'postgresql'
+        
+        # Connection string handling
+        conn_str = request.connection_string
+        
+        # If target_path style (conn|table), split it
+        if "|" in conn_str and type_key in ['postgresql', 'mysql']:
+            conn_str = conn_str.split("|")[0]
+
+        results = db_connector.get_schema_metadata(type_key, conn_str)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+        
+    return {"status": "success", "metadata": results}
+
+@router.post("/metadata/{config_id}")
+def trigger_metadata_scan(config_id: int, current_user: User = Depends(get_current_user)):
+    """
+    Triggers a background Metadata Scan for a specific config.
+    """
+    task = scan_datasource_task.delay(config_id, "metadata")
+    return {"status": "triggered", "task_id": str(task.id), "scan_scope": "metadata"}
+

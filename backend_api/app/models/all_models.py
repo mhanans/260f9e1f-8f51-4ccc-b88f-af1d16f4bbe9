@@ -28,6 +28,13 @@ class ScanConfig(SQLModel, table=True):
     tags: Optional[str] = None 
     last_scan_at: Optional[datetime] = None
     purpose_id: Optional[int] = Field(default=None, foreign_key="processingpurpose.id")
+    schedule_cron: Optional[str] = None
+    last_metadata_scan_at: Optional[datetime] = None
+    last_data_scan_at: Optional[datetime] = None
+    scan_scope: str = Field(default="full") # "metadata", "data", "full"
+    metadata_status: str = Field(default="none") # "none", "pending", "scanning", "completed", "failed"
+    schedule_timezone: str = Field(default="UTC")
+
 
 class AuditLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -38,6 +45,13 @@ class AuditLog(SQLModel, table=True):
     endpoint: Optional[str] = None
     ip_address: Optional[str] = None
     details: Optional[str] = None
+    # Enhanced Tracking
+    target_system: Optional[str] = None
+    target_container: Optional[str] = None
+    pii_field: Optional[str] = None
+    old_value: Optional[str] = None # Masked
+    new_value: Optional[str] = None # Masked
+    change_type: Optional[str] = None # "METADATA_CHANGE", "DATA_CHANGE"
 
 class ScanResult(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -51,6 +65,7 @@ class ScanResult(SQLModel, table=True):
     sample_data: Optional[str] = None 
     location_metadata: Optional[str] = None 
     is_encrypted: bool = Field(default=False)
+    sensitivity: str = Field(default="General") # "General", "Specific"
 
 class ScanRule(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -61,6 +76,8 @@ class ScanRule(SQLModel, table=True):
     entity_type: str 
     is_active: bool = Field(default=True)
     context_keywords: Optional[str] = None
+    sensitivity: str = Field(default="General")
+
 
 class DetectedData(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

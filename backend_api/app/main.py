@@ -31,6 +31,8 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 
 @app.on_event("startup")
 def on_startup():
+    from app.scheduler.scheduler_service import scheduler_service
+    scheduler_service.load_jobs_from_db()
     # In a real prod env, use Alembic. 
     # For now, we rely on sql/schema.sql being run manually or by deployment pipeline.
     # init_db() # Optional: Auto-create tables if needed using Code First (user preferred Database First)

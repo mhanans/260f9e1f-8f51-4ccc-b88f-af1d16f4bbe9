@@ -7,30 +7,26 @@ from pathlib import Path
 
 class CustomPIIScanner:
     def __init__(self):
+
+    def __init__(self):
         # Initialize Presidio Analyzer
         self.analyzer = AnalyzerEngine()
         
-        # 1. Disable Noise Recognizers (Hardcoded static noise removal)
-        useless_recognizers = [
-            "USPassportRecognizer", "UsBankRecognizer", "UsItinRecognizer", "UsLicenseRecognizer"
-        ]
-        self.analyzer.registry.recognizers = [
-            r for r in self.analyzer.registry.recognizers 
-            if r.name not in useless_recognizers
-        ]
-
         self.deny_words = []
         self.exclude_entities = []
         
-        # Dynamic Smart Filter Sets (Empty by default)
+        # Dynamic Smart Filter Sets (Loaded from DB)
         self.common_id_false_positives = set()
         self.person_negative_contexts = set()
         self.person_invalid_particles = set()
         
+        # Proximity Rules {entity_type: [keywords]}
+        self.proximity_rules = {}
+
         self.reload_rules()
 
     def reload_rules(self):
-        """Loads Custom Recognizers and Deny List from Database."""
+        """Loads Custom Recognizers, Deny List, and Configuration from Database."""
         try:
             from sqlmodel import Session, select
             from app.core.db import engine
@@ -41,12 +37,13 @@ class CustomPIIScanner:
                 if not rules:
                     return 
 
-                # Initialize containers
+                # efficient reset
                 deny_rules = []
                 regex_rules = []
                 exclude_rules = []
+                self.proximity_rules = {}
                 
-                # Dynamic Smart Filter Sets
+                # Reset sets
                 self.common_id_false_positives = set()
                 self.person_negative_contexts = set()
                 self.person_invalid_particles = set() 
@@ -59,7 +56,11 @@ class CustomPIIScanner:
                     elif r.rule_type == "exclude_entity":
                         exclude_rules.append(r.pattern)
                     
-                    # New Types
+                    # --- ZERO HARDCODE: DYNAMIC CONFIG ---
+                    elif r.rule_type == "DISABLE_DEFAULT":
+                        # Remove built-in recognizers by name
+                        self._remove_recognizer(r.pattern)
+                        
                     elif r.rule_type == "false_positive_person":
                         self.common_id_false_positives.add(r.pattern.lower())
                     elif r.rule_type == "negative_context_person":
@@ -67,6 +68,15 @@ class CustomPIIScanner:
                     elif r.rule_type == "invalid_particle_person":
                         self.person_invalid_particles.add(r.pattern.lower())
                     
+                    # Load Proximity Contexts
+                    if r.context_keywords:
+                         try:
+                             kws = json.loads(r.context_keywords)
+                             if r.entity_type not in self.proximity_rules:
+                                 self.proximity_rules[r.entity_type] = []
+                             self.proximity_rules[r.entity_type].extend([k.lower() for k in kws])
+                         except: pass
+
                 
                 # A. Update Deny List
                 self.deny_words = deny_rules
@@ -115,7 +125,29 @@ class CustomPIIScanner:
                 
         except Exception as e:
             print(f"Error loading scanner rules from DB: {e}")
-            pass
+     
+    def mask_pii(self, text: str, pii_type: str) -> str:
+        """
+        Masks PII while preserving format hints.
+        e.g. jdoe@example.com -> j***@example.com
+        e.g. 1234-5678 -> 12**-****
+        """
+        if not text: return ""
+        if len(text) <= 2: return "*" * len(text)
+        
+        if pii_type == "EMAIL_ADDRESS":
+            parts = text.split("@")
+            if len(parts) == 2:
+                name = parts[0]
+                domain = parts[1]
+                masked_name = name[:1] + "***" + (name[-1:] if len(name)>2 else "")
+                return f"{masked_name}@{domain}"
+        
+        # Default simple masking
+        start_len = 2 if len(text) > 4 else 0
+        end_len = 2 if len(text) > 4 else 0
+        middle = "*" * (len(text) - start_len - end_len)
+        return text[:start_len] + middle + text[-start_len:] if start_len else middle
 
     def _remove_recognizer(self, name):
         self.analyzer.registry.recognizers = [
@@ -192,6 +224,20 @@ class CustomPIIScanner:
                     if any(char.isdigit() for char in extracted_text): continue
                     if len(extracted_text) < 3: continue
                     if len(extracted_words) > 5: continue 
+
+
+            # --- DYNAMIC PROXIMITY LOGIC (Zero Hardcode) ---
+            # If DB rule says this Entity needs context keywords, check window +/- 50 chars.
+            if res.entity_type in self.proximity_rules:
+                required_keywords = self.proximity_rules[res.entity_type]
+                if required_keywords:
+                    start_window = max(0, res.start - 50)
+                    end_window = min(len(text), res.end + 50)
+                    window_text = text[start_window:end_window].lower()
+                    
+                    if not any(kw in window_text for kw in required_keywords):
+                        # Context missing -> Ignore finding
+                        continue
 
             if res.entity_type == "DATE_TIME":
                 if re.match(r"^-?\d{1,3}\.\d+$", extracted_text): continue

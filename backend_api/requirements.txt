@@ -1,5 +1,9 @@
 fastapi
 uvicorn[standard]
+apscheduler
+pymongo
+boto3
+mysql-connector-python
 sqlmodel
 psycopg2-binary
 presidio-analyzer

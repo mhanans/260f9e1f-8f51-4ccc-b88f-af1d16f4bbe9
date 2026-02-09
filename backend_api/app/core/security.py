@@ -21,4 +21,30 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+
+from cryptography.fernet import Fernet
+import base64
+
+class EncryptionUtility:
+    """Handles encryption of sensitive config values (like DB connection strings)."""
+    
+    def __init__(self):
+        # Ensure key is 32 url-safe base64-encoded bytes
+        # We use SECRET_KEY. Note: In prod, use a dedicated key.
+        key = settings.SECRET_KEY[:32].encode() 
+        if len(key) < 32:
+            key = key + b'=' * (32 - len(key))
+        self.fernet = Fernet(base64.urlsafe_b64encode(key))
+
+    def encrypt(self, plain_text: str) -> str:
+        if not plain_text: return ""
+        return self.fernet.encrypt(plain_text.encode()).decode()
+
+    def decrypt(self, cipher_text: str) -> str:
+        if not cipher_text: return ""
+        try:
+            return self.fernet.decrypt(cipher_text.encode()).decode()
+        except:
+            return cipher_text # Return as-is if not encrypted or error
+
+encryption_utility = EncryptionUtility()
