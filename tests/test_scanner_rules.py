@@ -27,6 +27,8 @@ def _build_scanner():
     s.deny_words = []
     s.exclude_entities = []
     s.dynamic_recognizer_names = set()
+    s.custom_regex_recognizer_names = set()
+    s.custom_regex_entities = set()
     s.common_id_false_positives = set()
     s.person_negative_contexts = set()
     s.person_invalid_particles = set()
@@ -83,6 +85,8 @@ def test_reload_rules_clears_stale_dynamic_recognizers_and_uses_entity_exclude()
     assert "nik_rule" in names
     assert "indonesian_header_deny" in names
     assert scanner.exclude_entities == ["PERSON"]
+    assert scanner.custom_regex_recognizer_names == {"nik_rule"}
+    assert scanner.custom_regex_entities == {"ID_NIK"}
 
 
 def test_reload_rules_applies_runtime_scan_config_rules():
@@ -115,3 +119,46 @@ def test_reload_rules_applies_runtime_scan_config_rules():
 
     assert scanner.score_threshold == 0.75
     assert scanner.analysis_language == "id"
+
+
+def test_analyze_text_only_returns_custom_regex_recognizers_with_name():
+    scanner = _build_scanner()
+    scanner.score_threshold = 0.4
+    scanner.analysis_language = "en"
+    scanner.custom_regex_entities = {"ID_NIK"}
+    scanner.custom_regex_recognizer_names = {"nik_rule"}
+
+    custom = SimpleNamespace(
+        entity_type="ID_NIK",
+        start=4,
+        end=20,
+        score=0.95,
+        recognition_metadata={"recognizer_name": "nik_rule"},
+    )
+    builtin = SimpleNamespace(
+        entity_type="PERSON",
+        start=0,
+        end=3,
+        score=0.98,
+        recognition_metadata={"recognizer_name": "SpacyRecognizer"},
+    )
+
+    def _analyze(**kwargs):
+        assert kwargs["entities"] == ["ID_NIK"]
+        return [builtin, custom]
+
+    scanner.analyzer.analyze = _analyze
+
+    text = "Ana 1234567890123456"
+    result = scanner.analyze_text(text)
+
+    assert result == [
+        {
+            "name": "nik_rule",
+            "type": "ID_NIK",
+            "start": 4,
+            "end": 20,
+            "score": 0.95,
+            "text": "1234567890123456",
+        }
+    ]
