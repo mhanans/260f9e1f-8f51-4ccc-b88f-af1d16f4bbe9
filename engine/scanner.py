@@ -149,6 +149,7 @@ class CustomPIIScanner:
                     supported_entity="DENY_LIST",
                     name="indonesian_header_deny",
                     deny_list=self.deny_words,
+                    supported_language=self.analysis_language,
                 )
                 self.analyzer.registry.add_recognizer(deny_recognizer)
                 self.dynamic_recognizer_names.add("indonesian_header_deny")
@@ -177,7 +178,7 @@ class CustomPIIScanner:
                     name=c.name,
                     patterns=[pat],
                     context=context_list,
-                    supported_language=None,
+                    supported_language=self.analysis_language,
                 )
                 self.analyzer.registry.add_recognizer(rec)
                 self.dynamic_recognizer_names.add(c.name)
@@ -222,13 +223,18 @@ class CustomPIIScanner:
         if not entities:
             return []
 
-        raw_results = self.analyzer.analyze(
-            text=text, 
-            language=self.analysis_language,
-            score_threshold=self.score_threshold,
-            context=context,
-            entities=entities,
-        )
+        try:
+            raw_results = self.analyzer.analyze(
+                text=text,
+                language=self.analysis_language,
+                score_threshold=self.score_threshold,
+                context=context,
+                entities=entities,
+            )
+        except ValueError as exc:
+            if "No matching recognizers were found" in str(exc):
+                return []
+            raise
 
         # --- DEDUPLICATION & PRIORITIZATION ---
         # 1. Sort by Start position, then Score (desc), then prefer ID_ prefix

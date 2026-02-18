@@ -222,3 +222,17 @@ def test_analyze_text_returns_empty_when_no_custom_regex_entities():
     scanner.analyzer.analyze = _analyze
 
     assert scanner.analyze_text("John Doe") == []
+
+
+def test_analyze_text_returns_empty_when_registry_has_no_matching_recognizers():
+    scanner = _build_scanner()
+    scanner.score_threshold = 0.4
+    scanner.analysis_language = "id"
+    scanner.custom_regex_entities = {"ID_KTP"}
+
+    def _analyze(**kwargs):
+        raise ValueError("No matching recognizers were found to serve the request.")
+
+    scanner.analyzer.analyze = _analyze
+
+    assert scanner.analyze_text("1234567890123456") == []
