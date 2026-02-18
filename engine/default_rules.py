@@ -42,6 +42,15 @@ DEFAULT_INDO_RULES = [
         "is_active": True
     },
     {
+        "name": "CreditCardRecognizer",
+        "entity_type": "ID_CREDIT_CARD",
+        "rule_type": "regex",
+        "pattern": r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b",
+        "score": 0.8,
+        "context_keywords": json.dumps(["kartu", "credit", "cc", "visa", "mastercard", "amex"]),
+        "is_active": True
+    },
+    {
         "name": "IndoPhoneNumber",
         "entity_type": "ID_PHONE_NUMBER",
         "rule_type": "regex",
@@ -112,7 +121,17 @@ DEFAULT_INDO_RULES = [
         "score": 0.6,
         "context_keywords": json.dumps(["email", "surat", "mail"]),
         "is_active": True
+    },
+    {
+        "name": "NameRecognizer",
+        "entity_type": "ID_NAME",
+        "rule_type": "regex",
+        "pattern": r"\b[A-Z][a-z]{1,}(?:\s+[A-Z][a-z]{1,}){1,3}\b",
+        "score": 0.55,
+        "context_keywords": json.dumps(["nama", "name", "customer", "karyawan", "pegawai"]),
+        "is_active": True
     }
+
 ]
 
 # --- DYNAMIC SEEDING FOR PERSON FILTERS ---
@@ -231,12 +250,12 @@ _sensitivity_map = {
     "ID_KK": "Spesifik", 
     "ID_NPWP": "Spesifik",
     "ID_BPJS": "Spesifik",
-    "CREDIT_CARD": "Spesifik",
+    "ID_CREDIT_CARD": "Spesifik",
     "ID_BANK_ACCOUNT": "Spesifik",
     "ID_PHONE_NUMBER": "Spesifik",
     "ID_EMAIL": "Spesifik",
     "ID_SOCIAL_MEDIA": "Umum",
-    "PERSON": "Spesifik",
+    "ID_NAME": "Spesifik",
     "LOCATION": "Umum",
     "DATE_TIME": "Umum",
     "NRP": "Spesifik"

@@ -5,6 +5,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from engine.scanner import CustomPIIScanner
+from engine.default_rules import DEFAULT_INDO_RULES
 
 
 class _FakeRegistry:
@@ -27,6 +28,8 @@ def _build_scanner():
     s.deny_words = []
     s.exclude_entities = []
     s.dynamic_recognizer_names = set()
+    s.custom_regex_recognizer_names = set()
+    s.custom_regex_entities = set()
     s.common_id_false_positives = set()
     s.person_negative_contexts = set()
     s.person_invalid_particles = set()
@@ -53,7 +56,7 @@ def test_reload_rules_clears_stale_dynamic_recognizers_and_uses_entity_exclude()
             rule_type="regex",
             pattern=r"\\b\\d{16}\\b",
             score=0.8,
-            entity_type="ID_NIK",
+            entity_type="ID_KTP",
             context_keywords='["nik", "ktp"]',
         ),
         SimpleNamespace(
@@ -83,6 +86,8 @@ def test_reload_rules_clears_stale_dynamic_recognizers_and_uses_entity_exclude()
     assert "nik_rule" in names
     assert "indonesian_header_deny" in names
     assert scanner.exclude_entities == ["PERSON"]
+    assert scanner.custom_regex_recognizer_names == {"nik_rule"}
+    assert scanner.custom_regex_entities == {"ID_KTP"}
 
 
 def test_reload_rules_applies_runtime_scan_config_rules():
@@ -115,3 +120,105 @@ def test_reload_rules_applies_runtime_scan_config_rules():
 
     assert scanner.score_threshold == 0.75
     assert scanner.analysis_language == "id"
+
+
+def test_analyze_text_only_returns_custom_regex_recognizers_with_name():
+    scanner = _build_scanner()
+    scanner.score_threshold = 0.4
+    scanner.analysis_language = "en"
+    scanner.custom_regex_entities = {"ID_KTP"}
+    scanner.custom_regex_recognizer_names = {"nik_rule"}
+
+    custom = SimpleNamespace(
+        entity_type="ID_KTP",
+        start=4,
+        end=20,
+        score=0.95,
+        recognition_metadata={"recognizer_name": "nik_rule"},
+    )
+    builtin = SimpleNamespace(
+        entity_type="PERSON",
+        start=0,
+        end=3,
+        score=0.98,
+        recognition_metadata={"recognizer_name": "SpacyRecognizer"},
+    )
+
+    def _analyze(**kwargs):
+        assert kwargs["entities"] == ["ID_KTP"]
+        return [builtin, custom]
+
+    scanner.analyzer.analyze = _analyze
+
+    text = "Ana 1234567890123456"
+    result = scanner.analyze_text(text)
+
+    assert result == [
+        {
+            "name": "nik_rule",
+            "type": "ID_KTP",
+            "start": 4,
+            "end": 20,
+            "score": 0.95,
+            "text": "1234567890123456",
+        }
+    ]
+
+
+def test_reload_rules_ignores_regex_entities_outside_allowed_list():
+    scanner = _build_scanner()
+
+    rules = [
+        SimpleNamespace(
+            name="org_rule",
+            rule_type="regex",
+            pattern=r"PT\s+[A-Z]+",
+            score=0.8,
+            entity_type="ID_ORGANIZATION",
+            context_keywords='["company"]',
+        ),
+    ]
+
+    scanner._fetch_active_rules = lambda: rules
+    scanner.reload_rules()
+
+    names = [r.name for r in scanner.analyzer.registry.recognizers]
+    assert "org_rule" not in names
+    assert scanner.custom_regex_recognizer_names == set()
+    assert scanner.custom_regex_entities == set()
+
+
+def test_default_rules_include_required_custom_regex_entities():
+    required_entities = {
+        "ID_KTP",
+        "ID_KK",
+        "ID_NPWP",
+        "ID_BPJS",
+        "ID_CREDIT_CARD",
+        "ID_BANK_ACCOUNT",
+        "ID_PHONE_NUMBER",
+        "ID_EMAIL",
+        "ID_SOCIAL_MEDIA",
+        "ID_NAME",
+    }
+
+    regex_entities = {
+        r["entity_type"]
+        for r in DEFAULT_INDO_RULES
+        if r.get("rule_type") == "regex"
+    }
+
+    assert required_entities.issubset(regex_entities)
+
+
+def test_analyze_text_returns_empty_when_no_custom_regex_entities():
+    scanner = _build_scanner()
+    scanner.score_threshold = 0.4
+    scanner.analysis_language = "en"
+
+    def _analyze(**kwargs):
+        raise AssertionError("analyzer should not be called without custom regex entities")
+
+    scanner.analyzer.analyze = _analyze
+
+    assert scanner.analyze_text("John Doe") == []
