@@ -24,6 +24,8 @@ class CustomPIIScanner:
         self.deny_words = []
         self.exclude_entities = []
         self.dynamic_recognizer_names = set()
+        self.score_threshold = 0.4
+        self.analysis_language = "en"
         
         # Dynamic Smart Filter Sets (Empty by default)
         self.common_id_false_positives = set()
@@ -88,6 +90,7 @@ class CustomPIIScanner:
             deny_rules = []
             regex_rules = []
             exclude_rules = []
+            scan_config_rules = {}
                 
             for r in rules:
                 if r.rule_type == "deny_list":
@@ -102,6 +105,24 @@ class CustomPIIScanner:
                     self.person_negative_contexts.add(r.pattern.lower())
                 elif r.rule_type == "invalid_particle_person":
                     self.person_invalid_particles.add(r.pattern.lower())
+                elif r.rule_type == "scan_config":
+                    scan_config_rules[r.name] = r.pattern
+
+            configured_threshold = scan_config_rules.get("scan_score_threshold")
+            if configured_threshold is not None:
+                try:
+                    parsed_threshold = float(configured_threshold)
+                    self.score_threshold = min(1.0, max(0.0, parsed_threshold))
+                except (TypeError, ValueError):
+                    self.score_threshold = 0.4
+            else:
+                self.score_threshold = 0.4
+
+            configured_language = scan_config_rules.get("scan_language")
+            if configured_language:
+                self.analysis_language = str(configured_language).strip().lower()
+            else:
+                self.analysis_language = "en"
 
             # A. Update Deny List
             self.deny_words = list(set(deny_rules))
@@ -176,8 +197,8 @@ class CustomPIIScanner:
 
         raw_results = self.analyzer.analyze(
             text=text, 
-            language='en',
-            score_threshold=0.4,
+            language=self.analysis_language,
+            score_threshold=self.score_threshold,
             context=context
         )
 

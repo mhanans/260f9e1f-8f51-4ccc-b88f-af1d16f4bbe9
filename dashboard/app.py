@@ -556,58 +556,9 @@ def main():
         # --- TAB 1: Detection Rules ---
         with tab_detect:
             st.subheader("Custom Regex Recognizers")
-# ... (existing tab_detect, tab_class, tab_ignore content ...
-
-        # --- TAB 4: Document Tags ---
-        with tab_doc_tags:
-            st.subheader("📄 Document Classification Rules")
-            st.caption("Auto-tag documents based on keywords (e.g. contains 'salary' -> Financial).")
-            
-            # Fetch and Organize
-            class_rules = [r for r in all_rules if r["rule_type"] == "classification"]
-            
-            # Group by Name (Category)
-            cat_map = {}
-            for r in class_rules:
-                cat_name = r["name"].replace("class_", "")
-                if cat_name not in cat_map: cat_map[cat_name] = []
-                cat_map[cat_name].append(r)
-            
-            # Display
-            for cat, rules_list in cat_map.items():
-                with st.expander(f"🏷️ {cat} ({len(rules_list)} rules)", expanded=False):
-                    for r in rules_list:
-                         c1, c2 = st.columns([4, 1])
-                         c1.code(r["pattern"])
-                         if c2.button("🗑️", key=f"del_cls_{r['id']}"):
-                             requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
-                             st.rerun()
-
-            st.divider()
-            st.write("### Add Classification Keyword")
-            with st.form("add_doc_class"):
-                c1, c2 = st.columns(2)
-                new_cat = c1.text_input("Category", placeholder="e.g. Confidential_Project")
-                new_key = c2.text_input("Keywords (comma sep)", placeholder="project_alpha, top_secret")
-                
-                if st.form_submit_button("Add Tag Rule"):
-                    if new_cat and new_key:
-                        safe_cat = new_cat.replace(" ", "_").strip()
-                        payload = {
-                            "name": f"class_{safe_cat}_{int(time.time())}", # Unique ID to allow multiple rules per category
-                            "rule_type": "classification",
-                            "pattern": new_key, 
-                            "entity_type": "DOC_TAG",
-                            "score": 1.0, 
-                            "is_active": True
-                        }
-                        res = requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
-                        if res.status_code == 200: st.success("Added!"); st.rerun()
-                        else: st.error(res.text)
-             
             for r in regex_rules:
                 with st.expander(f"🧩 {r['entity_type']} ({r['name']})", expanded=False):
-                    c1, c2, c3 = st.columns([3, 1, 1])
+                    c1, c2 = st.columns([3, 1])
                     # We can't easily edit via API PUT without implemented update endpoint for all fields, 
                     # but we can toggle active state.
                     st.text_input("Regex", value=r["pattern"], disabled=True, key=f"d_rex_{r['id']}")
@@ -708,6 +659,108 @@ def main():
                        res = requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
                        if res.status_code == 200: st.success("Added!"); st.rerun()
                        else: st.error(res.text)
+
+            st.divider()
+            st.write("### ⚙️ Scanner Runtime Configuration")
+            st.caption("No hardcoded scan controls: set threshold and language here. These settings are stored as active rules.")
+
+            config_rules = {r["name"]: r for r in all_rules if r["rule_type"] == "scan_config"}
+            threshold_rule = config_rules.get("scan_score_threshold")
+            language_rule = config_rules.get("scan_language")
+
+            default_threshold = 0.4
+            if threshold_rule:
+                try:
+                    default_threshold = float(threshold_rule["pattern"])
+                except (TypeError, ValueError):
+                    default_threshold = 0.4
+            default_threshold = min(1.0, max(0.0, default_threshold))
+
+            default_language = "en"
+            if language_rule and language_rule.get("pattern"):
+                default_language = language_rule["pattern"].strip().lower()
+
+            with st.form("scanner_runtime_config"):
+                c1, c2 = st.columns(2)
+                scan_threshold = c1.slider("Detection score threshold", 0.0, 1.0, float(default_threshold), 0.05)
+                scan_language = c2.selectbox("Analyzer language", ["en", "id"], index=0 if default_language == "en" else 1)
+
+                if st.form_submit_button("Save Scan Runtime Config"):
+                    payloads = [
+                        {
+                            "name": "scan_score_threshold",
+                            "rule_type": "scan_config",
+                            "pattern": str(scan_threshold),
+                            "entity_type": "SCAN_CONFIG",
+                            "score": 1.0,
+                            "is_active": True,
+                        },
+                        {
+                            "name": "scan_language",
+                            "rule_type": "scan_config",
+                            "pattern": scan_language,
+                            "entity_type": "SCAN_CONFIG",
+                            "score": 1.0,
+                            "is_active": True,
+                        },
+                    ]
+
+                    for payload in payloads:
+                        existing = config_rules.get(payload["name"])
+                        if existing:
+                            requests.delete(f"{API_URL}/config/rules/{existing['id']}", headers=headers)
+                        requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
+
+                    st.success("Scanner runtime config updated.")
+                    st.rerun()
+
+        # --- TAB 4: Document Tags ---
+        with tab_doc_tags:
+            st.subheader("📄 Document Classification Rules")
+            st.caption("Auto-tag documents based on keywords (e.g. contains 'salary' -> Financial).")
+
+            # Fetch and Organize
+            class_rules = [r for r in all_rules if r["rule_type"] == "classification"]
+
+            # Group by Name (Category)
+            cat_map = {}
+            for r in class_rules:
+                cat_name = r["name"].replace("class_", "")
+                if cat_name not in cat_map:
+                    cat_map[cat_name] = []
+                cat_map[cat_name].append(r)
+
+            # Display
+            for cat, rules_list in cat_map.items():
+                with st.expander(f"🏷️ {cat} ({len(rules_list)} rules)", expanded=False):
+                    for r in rules_list:
+                         c1, c2 = st.columns([4, 1])
+                         c1.code(r["pattern"])
+                         if c2.button("🗑️", key=f"del_cls_{r['id']}"):
+                             requests.delete(f"{API_URL}/config/rules/{r['id']}", headers=headers)
+                             st.rerun()
+
+            st.divider()
+            st.write("### Add Classification Keyword")
+            with st.form("add_doc_class"):
+                c1, c2 = st.columns(2)
+                new_cat = c1.text_input("Category", placeholder="e.g. Confidential_Project")
+                new_key = c2.text_input("Keywords (comma sep)", placeholder="project_alpha, top_secret")
+
+                if st.form_submit_button("Add Tag Rule"):
+                    if new_cat and new_key:
+                        safe_cat = new_cat.replace(" ", "_").strip()
+                        payload = {
+                            "name": f"class_{safe_cat}_{int(time.time())}", # Unique ID to allow multiple rules per category
+                            "rule_type": "classification",
+                            "pattern": new_key,
+                            "entity_type": "DOC_TAG",
+                            "score": 1.0,
+                            "is_active": True
+                        }
+                        res = requests.post(f"{API_URL}/config/rules", headers=headers, json=payload)
+                        if res.status_code == 200: st.success("Added!"); st.rerun()
+                        else: st.error(res.text)
 
         # --- TAB 2: Sensitivity Map ---
         with tab_class:
