@@ -83,3 +83,35 @@ def test_reload_rules_clears_stale_dynamic_recognizers_and_uses_entity_exclude()
     assert "nik_rule" in names
     assert "indonesian_header_deny" in names
     assert scanner.exclude_entities == ["PERSON"]
+
+
+def test_reload_rules_applies_runtime_scan_config_rules():
+    scanner = _build_scanner()
+    scanner.score_threshold = 0.4
+    scanner.analysis_language = "en"
+
+    rules = [
+        SimpleNamespace(
+            name="scan_score_threshold",
+            rule_type="scan_config",
+            pattern="0.75",
+            score=1.0,
+            entity_type="SCAN_CONFIG",
+            context_keywords=None,
+        ),
+        SimpleNamespace(
+            name="scan_language",
+            rule_type="scan_config",
+            pattern="id",
+            score=1.0,
+            entity_type="SCAN_CONFIG",
+            context_keywords=None,
+        ),
+    ]
+
+    scanner._fetch_active_rules = lambda: rules
+
+    scanner.reload_rules()
+
+    assert scanner.score_threshold == 0.75
+    assert scanner.analysis_language == "id"
