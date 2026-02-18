@@ -24,6 +24,8 @@ class CustomPIIScanner:
         self.deny_words = []
         self.exclude_entities = []
         self.dynamic_recognizer_names = set()
+        self.custom_regex_recognizer_names = set()
+        self.custom_regex_entities = set()
         self.score_threshold = 0.4
         self.analysis_language = "en"
         
@@ -68,6 +70,8 @@ class CustomPIIScanner:
         for rec_name in list(self.dynamic_recognizer_names):
             self._remove_recognizer(rec_name)
         self.dynamic_recognizer_names = set()
+        self.custom_regex_recognizer_names = set()
+        self.custom_regex_entities = set()
 
         self.deny_words = []
         self.exclude_entities = []
@@ -160,6 +164,8 @@ class CustomPIIScanner:
                 )
                 self.analyzer.registry.add_recognizer(rec)
                 self.dynamic_recognizer_names.add(c.name)
+                self.custom_regex_recognizer_names.add(c.name)
+                self.custom_regex_entities.add(e_type)
 
             # C. Exclude entities
             self.exclude_entities = [x for x in exclude_rules if x]
@@ -195,11 +201,14 @@ class CustomPIIScanner:
         if not self.analyzer:
             return []
 
+        entities = sorted(self.custom_regex_entities) if self.custom_regex_entities else None
+
         raw_results = self.analyzer.analyze(
             text=text, 
             language=self.analysis_language,
             score_threshold=self.score_threshold,
-            context=context
+            context=context,
+            entities=entities,
         )
 
         # --- DEDUPLICATION & PRIORITIZATION ---
@@ -236,6 +245,13 @@ class CustomPIIScanner:
 
         output = []
         for res in results:
+            recognizer_name = None
+            if getattr(res, "recognition_metadata", None):
+                recognizer_name = res.recognition_metadata.get("recognizer_name")
+
+            if recognizer_name and recognizer_name not in self.custom_regex_recognizer_names:
+                continue
+
             if res.entity_type == "DENY_LIST": continue
             
             # Helper to check excludes
@@ -322,6 +338,7 @@ class CustomPIIScanner:
                  if extracted_text.lower() in ["astra", "islam", "hindu", "buddha", "kristen"]: continue # Religion/Company noise
 
             output.append({
+                "name": recognizer_name or res.entity_type,
                 "type": res.entity_type,
                 "start": res.start,
                 "end": res.end,
