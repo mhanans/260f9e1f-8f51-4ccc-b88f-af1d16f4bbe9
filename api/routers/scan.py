@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlmodel import Session, select
 from pydantic import BaseModel
+import re
 from api.db import get_session
 from api.deps import get_current_user
 from api.models import User, ScanConfig, ScanResult
@@ -50,7 +51,14 @@ async def scan_file(file: UploadFile = File(...), current_user: User = Depends(g
         full_text_for_encryption_check += text_segment + "\n"
         
         # Analyze chunk
-        segment_results = scanner_engine.analyze_text(text_segment)
+        chunk_context = []
+        if file.filename:
+            chunk_context.extend([x.lower() for x in re.split(r"[^a-zA-Z0-9]", file.filename) if len(x) > 2])
+        for meta_key in ("sheet", "column", "header", "table", "field"):
+            if meta_key in metadata and metadata[meta_key]:
+                chunk_context.extend([x.lower() for x in re.split(r"[^a-zA-Z0-9]", str(metadata[meta_key])) if len(x) > 2])
+
+        segment_results = scanner_engine.analyze_text(text_segment, context=chunk_context)
         
         # Enrich with metadata
         for res in segment_results:

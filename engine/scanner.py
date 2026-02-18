@@ -1,25 +1,29 @@
-from presidio_analyzer import AnalyzerEngine, PatternRecognizer, RecognizerResult, Pattern
-from presidio_analyzer.nlp_engine import NlpEngineProvider
+from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
 import re
 import json
-from pathlib import Path
+
 
 class CustomPIIScanner:
     def __init__(self):
-        # Initialize Presidio Analyzer
-        self.analyzer = AnalyzerEngine()
-        
-        # 1. Disable Noise Recognizers (Hardcoded static noise removal)
-        useless_recognizers = [
-            "USPassportRecognizer", "UsBankRecognizer", "UsItinRecognizer", "UsLicenseRecognizer"
-        ]
-        self.analyzer.registry.recognizers = [
-            r for r in self.analyzer.registry.recognizers 
-            if r.name not in useless_recognizers
-        ]
+        # Initialize Presidio Analyzer (graceful fallback when model download is blocked)
+        self.analyzer = None
+        try:
+            self.analyzer = AnalyzerEngine()
+
+            # 1. Disable Noise Recognizers (Hardcoded static noise removal)
+            useless_recognizers = [
+                "USPassportRecognizer", "UsBankRecognizer", "UsItinRecognizer", "UsLicenseRecognizer"
+            ]
+            self.analyzer.registry.recognizers = [
+                r for r in self.analyzer.registry.recognizers
+                if r.name not in useless_recognizers
+            ]
+        except Exception as e:
+            print(f"Warning: scanner analyzer init failed, scanner will run in degraded mode: {e}")
 
         self.deny_words = []
         self.exclude_entities = []
+        self.dynamic_recognizer_names = set()
         
         # Dynamic Smart Filter Sets (Empty by default)
         self.common_id_false_positives = set()
@@ -30,94 +34,114 @@ class CustomPIIScanner:
         # Seeding is handled by main.py on startup
         self.reload_rules()
 
-    def reload_rules(self):
-        """Loads Custom Recognizers and Deny List from Database."""
+    def _fetch_active_rules(self):
+        """Fetch active rules from DB (separated for testability)."""
+        from sqlmodel import Session, select
+        from api.db import engine
+        from api.models import ScanRule
+
+        with Session(engine) as session:
+            return session.exec(select(ScanRule).where(ScanRule.is_active == True)).all()
+
+    def _parse_context_keywords(self, raw_context):
+        if not raw_context:
+            return []
+        if isinstance(raw_context, list):
+            return [str(x).strip() for x in raw_context if str(x).strip()]
+
         try:
-            from sqlmodel import Session, select
-            from api.db import engine
-            from api.models import ScanRule
-            
-            with Session(engine) as session:
-                rules = session.exec(select(ScanRule).where(ScanRule.is_active == True)).all()
-                if not rules:
-                    return 
+            parsed = json.loads(raw_context)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if str(x).strip()]
+        except Exception:
+            pass
+
+        return [x.strip() for x in str(raw_context).split(",") if x.strip()]
+
+    def _clear_dynamic_state(self):
+        if not self.analyzer:
+            return
+
+        # Remove previously loaded dynamic recognizers (important when a rule is deleted/deactivated)
+        for rec_name in list(self.dynamic_recognizer_names):
+            self._remove_recognizer(rec_name)
+        self.dynamic_recognizer_names = set()
+
+        self.deny_words = []
+        self.exclude_entities = []
+        self.common_id_false_positives = set()
+        self.person_negative_contexts = set()
+        self.person_invalid_particles = set()
+
+    def reload_rules(self):
+        """Loads custom recognizers and filtering rules from DB."""
+        try:
+            self._clear_dynamic_state()
+            if not self.analyzer:
+                return
+
+            rules = self._fetch_active_rules()
+            if not rules:
+                return
 
                 # Initialize containers
-                deny_rules = []
-                regex_rules = []
-                exclude_rules = []
+            deny_rules = []
+            regex_rules = []
+            exclude_rules = []
                 
-                # Dynamic Smart Filter Sets
-                self.common_id_false_positives = set()
-                self.person_negative_contexts = set()
-                self.person_invalid_particles = set() # Renamed to standard snake_case
+            for r in rules:
+                if r.rule_type == "deny_list":
+                    deny_rules.append(r.pattern)
+                elif r.rule_type == "regex":
+                    regex_rules.append(r)
+                elif r.rule_type == "exclude_entity":
+                    exclude_rules.append(r.entity_type or r.pattern)
+                elif r.rule_type == "false_positive_person":
+                    self.common_id_false_positives.add(r.pattern.lower())
+                elif r.rule_type == "negative_context_person":
+                    self.person_negative_contexts.add(r.pattern.lower())
+                elif r.rule_type == "invalid_particle_person":
+                    self.person_invalid_particles.add(r.pattern.lower())
 
-                for r in rules:
-                    if r.rule_type == "deny_list":
-                        deny_rules.append(r.pattern)
-                    elif r.rule_type == "regex":
-                        regex_rules.append(r)
-                    elif r.rule_type == "exclude_entity":
-                        exclude_rules.append(r.pattern)
-                    
-                    # New Types
-                    elif r.rule_type == "false_positive_person":
-                        self.common_id_false_positives.add(r.pattern.lower())
-                    elif r.rule_type == "negative_context_person":
-                        self.person_negative_contexts.add(r.pattern.lower())
-                    elif r.rule_type == "invalid_particle_person":
-                        self.person_invalid_particles.add(r.pattern.lower())
-                    
-                
-                # A. Update Deny List
-                self.deny_words = deny_rules
-                self._remove_recognizer("indonesian_header_deny")
-                if self.deny_words:
-                    deny_recognizer = PatternRecognizer(
-                        supported_entity="DENY_LIST",
-                        name="indonesian_header_deny",
-                        deny_list=list(set(self.deny_words))
-                    )
-                    self.analyzer.registry.add_recognizer(deny_recognizer)
-                
-                # B. Update Custom Regex
-                print(f"DEBUG: Loading {len(regex_rules)} regex rules from DB...")
-                
-                legacy_map = {
-                    "PHONE_NUMBER": "ID_PHONE_NUMBER",
-                    "FIN_BANK_ACCT_ID": "ID_BANK_ACCOUNT", 
-                    "FIN_AMT": "ID_FINANCE_AMOUNT",
-                    "ORGANIZATION": "ID_ORGANIZATION",
-                    "SOCIAL_MEDIA": "ID_SOCIAL_MEDIA", 
-                    "PROJECT_NAME": "ID_PROJECT_NAME",
-                    "EMAIL_ADDRESS": "ID_EMAIL"
-                }
+            # A. Update Deny List
+            self.deny_words = list(set(deny_rules))
+            if self.deny_words:
+                deny_recognizer = PatternRecognizer(
+                    supported_entity="DENY_LIST",
+                    name="indonesian_header_deny",
+                    deny_list=self.deny_words,
+                )
+                self.analyzer.registry.add_recognizer(deny_recognizer)
+                self.dynamic_recognizer_names.add("indonesian_header_deny")
 
-                for c in regex_rules:
-                    self._remove_recognizer(c.name)
-                    
-                    try:
-                        context_list = json.loads(c.context_keywords) if c.context_keywords else []
-                    except:
-                        context_list = []
+            # B. Update Custom Regex
+            legacy_map = {
+                "PHONE_NUMBER": "ID_PHONE_NUMBER",
+                "FIN_BANK_ACCT_ID": "ID_BANK_ACCOUNT",
+                "FIN_AMT": "ID_FINANCE_AMOUNT",
+                "ORGANIZATION": "ID_ORGANIZATION",
+                "SOCIAL_MEDIA": "ID_SOCIAL_MEDIA",
+                "PROJECT_NAME": "ID_PROJECT_NAME",
+                "EMAIL_ADDRESS": "ID_EMAIL",
+            }
 
-                    # Enforce ID_ prefix for known types (Legacy DB Fix)
-                    e_type = legacy_map.get(c.entity_type, c.entity_type)
+            for c in regex_rules:
+                context_list = self._parse_context_keywords(c.context_keywords)
+                e_type = legacy_map.get(c.entity_type, c.entity_type)
 
-                    pat = Pattern(name=f"{c.name}_pattern", regex=c.pattern, score=c.score)
-                    rec = PatternRecognizer(
-                        supported_entity=e_type, 
-                        name=c.name,
-                        patterns=[pat],
-                        context=context_list,
-                        supported_language=None # Apply to ALL languages (EN, ID, etc.)
-                    )
-                    self.analyzer.registry.add_recognizer(rec)
-                
-                print(f"DEBUG: Successfully registered {len(regex_rules)} custom recognizers.")
-                    
-                # C. Exclude entities
-                self.exclude_entities = exclude_rules
+                pat = Pattern(name=f"{c.name}_pattern", regex=c.pattern, score=c.score)
+                rec = PatternRecognizer(
+                    supported_entity=e_type,
+                    name=c.name,
+                    patterns=[pat],
+                    context=context_list,
+                    supported_language=None,
+                )
+                self.analyzer.registry.add_recognizer(rec)
+                self.dynamic_recognizer_names.add(c.name)
+
+            # C. Exclude entities
+            self.exclude_entities = [x for x in exclude_rules if x]
                 
         except Exception as e:
             print(f"Error loading scanner rules from DB: {e}")
@@ -147,6 +171,9 @@ class CustomPIIScanner:
         # 5. Threshold Filter (Score > 0.4)
         # Note: We use 'en' as the pipeline language to leverage the English NLP model for context/NER.
         # Custom Indonesian recognizers are registered with supported_language=None, so they run alongside English rules.
+        if not self.analyzer:
+            return []
+
         raw_results = self.analyzer.analyze(
             text=text, 
             language='en',
