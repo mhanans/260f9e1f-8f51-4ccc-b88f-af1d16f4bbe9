@@ -30,6 +30,7 @@ def _build_scanner():
     s.dynamic_recognizer_names = set()
     s.custom_regex_recognizer_names = set()
     s.custom_regex_entities = set()
+    s.regex_context_map = {}
     s.common_id_false_positives = set()
     s.person_negative_contexts = set()
     s.person_invalid_particles = set()
@@ -236,3 +237,63 @@ def test_analyze_text_returns_empty_when_registry_has_no_matching_recognizers():
     scanner.analyzer.analyze = _analyze
 
     assert scanner.analyze_text("1234567890123456") == []
+
+
+def test_analyze_text_skips_match_when_required_context_missing():
+    scanner = _build_scanner()
+    scanner.score_threshold = 0.4
+    scanner.analysis_language = "en"
+    scanner.custom_regex_entities = {"ID_KTP"}
+    scanner.custom_regex_recognizer_names = {"nik_rule"}
+    scanner.regex_context_map = {"nik_rule": ["nik"]}
+
+    hit = SimpleNamespace(
+        entity_type="ID_KTP",
+        start=0,
+        end=16,
+        score=0.95,
+        recognition_metadata={"recognizer_name": "nik_rule"},
+    )
+
+    scanner.analyzer.analyze = lambda **kwargs: [hit]
+
+    assert scanner.analyze_text("1234567890123456") == []
+
+
+def test_analyze_text_phone_id_requires_plus62_prefix():
+    scanner = _build_scanner()
+    scanner.score_threshold = 0.4
+    scanner.analysis_language = "en"
+    scanner.custom_regex_entities = {"ID_PHONE_NUMBER"}
+    scanner.custom_regex_recognizer_names = {"phone_rule"}
+    scanner.regex_context_map = {"phone_rule": []}
+
+    local_phone = SimpleNamespace(
+        entity_type="ID_PHONE_NUMBER",
+        start=0,
+        end=12,
+        score=0.9,
+        recognition_metadata={"recognizer_name": "phone_rule"},
+    )
+    intl_phone = SimpleNamespace(
+        entity_type="ID_PHONE_NUMBER",
+        start=13,
+        end=26,
+        score=0.9,
+        recognition_metadata={"recognizer_name": "phone_rule"},
+    )
+
+    scanner.analyzer.analyze = lambda **kwargs: [local_phone, intl_phone]
+
+    result = scanner.analyze_text("081234567890 +628123456789")
+
+    assert result == [
+        {
+            "name": "phone_rule",
+            "type": "ID_PHONE_NUMBER",
+            "start": 13,
+            "end": 26,
+            "score": 0.9,
+            "text": "+628123456789",
+        }
+    ]

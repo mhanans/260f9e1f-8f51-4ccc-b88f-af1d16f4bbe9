@@ -40,6 +40,7 @@ class CustomPIIScanner:
         self.dynamic_recognizer_names = set()
         self.custom_regex_recognizer_names = set()
         self.custom_regex_entities = set()
+        self.regex_context_map = {}
         self.score_threshold = 0.4
         self.analysis_language = "en"
         
@@ -86,6 +87,7 @@ class CustomPIIScanner:
         self.dynamic_recognizer_names = set()
         self.custom_regex_recognizer_names = set()
         self.custom_regex_entities = set()
+        self.regex_context_map = {}
 
         self.deny_words = []
         self.exclude_entities = []
@@ -184,6 +186,7 @@ class CustomPIIScanner:
                 self.dynamic_recognizer_names.add(c.name)
                 self.custom_regex_recognizer_names.add(c.name)
                 self.custom_regex_entities.add(e_type)
+                self.regex_context_map[c.name] = [kw.lower() for kw in context_list]
 
             # C. Exclude entities
             self.exclude_entities = [x for x in exclude_rules if x]
@@ -268,6 +271,8 @@ class CustomPIIScanner:
                 results.append(res)
                 last_end = res.end
 
+        normalized_context = [str(x).lower() for x in (context or [])]
+
         output = []
         for res in results:
             recognizer_name = None
@@ -276,6 +281,19 @@ class CustomPIIScanner:
 
             if recognizer_name not in self.custom_regex_recognizer_names:
                 continue
+
+            required_keywords = self.regex_context_map.get(recognizer_name, [])
+            if required_keywords:
+                start_window = max(0, res.start - 50)
+                end_window = min(len(text), res.end + 50)
+                window_text = text[start_window:end_window].lower()
+                has_window_context = any(kw in window_text for kw in required_keywords)
+                has_external_context = any(
+                    any(kw in ctx_val for kw in required_keywords)
+                    for ctx_val in normalized_context
+                )
+                if not (has_window_context or has_external_context):
+                    continue
 
             if res.entity_type == "DENY_LIST": continue
             
@@ -350,6 +368,8 @@ class CustomPIIScanner:
                 # Reject if too short (e.g. < 7 digits)
                 digits = re.sub(r"\D", "", extracted_text)
                 if len(digits) < 7: continue
+                if res.entity_type == "ID_PHONE_NUMBER" and not extracted_text.strip().startswith("+62"):
+                    continue
 
             # 4. Filter US_PASSPORT false positives (random 9 digit numbers)
             if res.entity_type == "US_PASSPORT":
